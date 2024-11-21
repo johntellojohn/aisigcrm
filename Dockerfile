@@ -1,17 +1,17 @@
 # Usar una imagen base de Python
 FROM python:3.9-slim
 
-# Establece el directorio de trabajo
+# Establecer el directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Copia el requirements.txt
-COPY requirements.txt requirements.txt
+# Copiar los archivos del proyecto al contenedor
+COPY . /app
 
-# Instala las dependencias, incluyendo las bibliotecas CUDA necesarias
-RUN pip install -r requirements.txt
+# Instalar las dependencias desde requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Exponer el puerto si tu aplicación lo requiere (ajusta según sea necesario)
+# Exponer el puerto que usa la aplicación
 EXPOSE 4080
 
-# Comando para ejecutar tu aplicación
-CMD ["python", "./aisigcrm.py"]
+# Comando para ejecutar la aplicación
+CMD ["python", "aisigcrm.py"]

@@ -11,7 +11,7 @@ COPY . /app
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Exponer el puerto que usa la aplicación
-EXPOSE 4080
+EXPOSE 5010
 
 # Comando para ejecutar la aplicación
 CMD ["python", "aisigcrm.py"]

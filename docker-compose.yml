@@ -4,6 +4,6 @@ services:
     build:
       context: .
     ports:
-      - "4080:4080"
+      - "5010:50010"
     volumes:
       - .:/app

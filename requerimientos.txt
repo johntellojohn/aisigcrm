@@ -1,0 +1,10 @@
+pip install Flask
+pip install openai
+pip install pandas
+pip install Unidecode
+pip install scikit-learn
+pip install bs4
+pip install google-cloud-vision
+pip install langchain-community
+pip install pinecone-client
+pip install langchain-openai

@@ -217,8 +217,7 @@ def upsert_data():
         # Buscar el vector con el ID "InstruccionesDelBot"
         instructions_id = "IntencionesDelBot"
         existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
-        
-        values_instructions = """
+        values_intructions = """
             Lista de intenciones:
         """ + values_intention  
 

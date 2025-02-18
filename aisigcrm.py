@@ -507,7 +507,7 @@ def chatbot():
 
         # Formatear las intenciones en un diccionario
         intenciones_formateadas = {}
-        for match in intenciones['matches']:
+        for match in intentions['matches']:
             intencion = match['metadata'].get('intencion')
             descripcion = match['metadata'].get('descripcion')
             if intencion and descripcion:

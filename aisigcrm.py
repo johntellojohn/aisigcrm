@@ -556,7 +556,7 @@ def chatbot():
                 )
                 # Extraer la intención detectada por GPT
                 intencion_detectada = respuesta_gpt.choices[0].message.content.strip()
-                print("Intención detectada:", intencion_detectada)
+                print(f"\n\n\n ENTRAR {intencion_detectada}: \n\n\n")
             except Exception as e:
                 print("Error al llamar a la API de OpenAI:", str(e))
 

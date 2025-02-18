@@ -533,7 +533,7 @@ def chatbot():
 
                 close_connection_response = requests.post(
                     'https://sigcrm.pro/close-conection',  
-                    json={"id": user_id_int, "type": intencion_detectada, "index": index_name, "productService": productService}  
+                    json={"id": user_id_int, "type": intencion_detectada, "index": index_name}  
                 )
 
                 if close_connection_response.status_code == 201 or close_connection_response.status_code == 200:

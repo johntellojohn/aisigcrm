@@ -500,7 +500,7 @@ def chatbot():
 
 
         # Verificar intenciones
-        print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
+        intencion_detectada = False
         prompt_intentions = index.query(
             namespace=name_space,
             id="IntencionesDelBot",
@@ -540,13 +540,8 @@ def chatbot():
             prompt += f'\nPregunta/Comentario del usuario: "{pregunta}"\n'
             prompt += "Intención detectada:"
 
-            print("\nPROMPT PARA GPT:\n", prompt)
-
             # Llamar a la API de OpenAI con el formato actualizado
-            
-            print("TOKEN:", os.getenv('OPENAI_API_KEY'))
             try:
-                print("TOKEN1:", os.getenv('OPENAI_API_KEY'))
                 respuesta_gpt = client.chat.completions.create(
                     model="gpt-3.5-turbo",  # Usar un modelo válido
                     messages=[
@@ -558,37 +553,13 @@ def chatbot():
                 )
                 # Extraer la intención detectada por GPT
                 intencion_detectada = respuesta_gpt.choices[0].message.content.strip()
-                print(f"\n\n\n ENTRAR {intencion_detectada}: \n\n\n")
             except Exception as e:
+                print(f"\n\n\n")
                 print("Error al llamar a la API de OpenAI:", str(e))
-
-            # intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
-            # print("Intención detectada:", intencion_detectada)
+                print(f"\n\n\n")
 
 
-        #intentions = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match]
-        
-        #print("INTENCIONES ****:", prompt_intentions)
-        #intenciones = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match and 'text' in match['metadata']]
-        #print("enjauladas ****:", intenciones)
 
-        # Formatear las intenciones en un diccionario
-        #intenciones_formateadas = {}
-        #for match in intentions['matches']:
-        #    intencion = match['metadata'].get('intencion')
-        #    descripcion = match['metadata'].get('descripcion')
-        #    if intencion and descripcion:
-        #        intenciones_formateadas[intencion] = descripcion
-
-        #print("Intenciones formateadas:", intenciones_formateadas)
-
-
-       
-
-
-        intencion_detectada = 'PAGAR'
-
-        
 
         if intencion_detectada:
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")

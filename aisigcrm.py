@@ -560,6 +560,7 @@ def chatbot():
                 print("Error al llamar a la API de OpenAI:", str(e))
                 print(f"\n\n\n")
 
+        print(f"\n\n\nINTENTION '{intencion_detectada}'\n\n\n")
 
         if intencion_detectadaand intencion_detectada.lower() != "ninguna":
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")

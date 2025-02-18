@@ -534,18 +534,18 @@ def chatbot():
 
 
         # Llamar a la API de OpenAI
-        respuesta_gpt = openai.Completion.create(
-            engine="gpt-4",  # Puedes usar otro modelo si prefieres
-            #engine="gpt-4gpt-4o-mini",  # Puedes usar otro modelo si prefieres
-            prompt=prompt,
-            max_tokens=50,  # Limitar la longitud de la respuesta
-            temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
-        )
+        #respuesta_gpt = openai.Completion.create(
+        #    engine="gpt-4",  # Puedes usar otro modelo si prefieres
+        #    #engine="gpt-4gpt-4o-mini",  # Puedes usar otro modelo si prefieres
+        #    prompt=prompt,
+        #    max_tokens=50,  # Limitar la longitud de la respuesta
+        #    temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
+        #)
 
         # Extraer la intención detectada por GPT
-        intencion_detectada = respuesta_gpt.choices[0].text.strip()
+        #intencion_detectada = respuesta_gpt.choices[0].text.strip()
         print(f"\n\n\n **** \n\n\n")
-        print("Intención detectada:", intencion_detectada)
+        #print("Intención detectada:", intencion_detectada)
         print(f"\n\n\n **** \n\n\n")
 
 

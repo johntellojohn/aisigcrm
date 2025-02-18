@@ -525,6 +525,9 @@ def chatbot():
         for intencion, descripcion in intenciones_formateadas.items():  # Usar intenciones_formateadas
             prompt += f"- {intencion}: {descripcion}\n"
 
+            print("ITENTION *****")
+            print(f"- {intencion}: {descripcion}\n")
+
         prompt += f"""
         Pregunta/Comentario del usuario: "{pregunta}"
         Intención detectada:

@@ -22,6 +22,11 @@ from langchain_openai import ChatOpenAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.schema import Document
 from dotenv import load_dotenv
+import sys
+
+
+print("Este es un mensaje de prueba", flush=True)  # Método 1
+sys.stdout.flush()  # Método 2
 
 
 # Obtener credenciales desde .env

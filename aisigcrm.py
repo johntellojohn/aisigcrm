@@ -24,9 +24,12 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 
 
-os.environ["PINECONE_API_KEY"] = ""
-os.environ["OPENAI_API_KEY"] = ""
-pc = Pinecone(api_key='')
+# Obtener credenciales desde .env
+os.environ["PINECONE_API_KEY"] = os.getenv("PINECONE_API_KEY", "")
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "")
+
+# Inicializar Pinecone
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
 
 app = Flask(__name__)

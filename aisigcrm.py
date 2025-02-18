@@ -441,7 +441,7 @@ def chatbot():
             [Document(page_content=text) for text in user_history]
         )
 
-        print(input_documents)
+        #print(input_documents)
 
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
         chain = load_qa_chain(llm, chain_type="stuff")
@@ -455,7 +455,7 @@ def chatbot():
         # Historial nuevo de usuario
         userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
         count = userHistory.count("- Respuesta:")
-        print(count)
+        #print(count)
         # Eliminación de data
         if count==max_histories:
             patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
@@ -504,6 +504,8 @@ def chatbot():
 
 
         # Verificar intenciones
+        print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
+
         intenciones = {
             "enviando con un asistente": "AGENTE",
             "enviandé al agendamiento": "AGENTE",
@@ -519,17 +521,9 @@ def chatbot():
         respuestaLower = respuesta.lower()  
         pregunta = pregunta.lower() 
 
-        intencion_detectada = None
+        intencion_detectada = 'PAGAR'
 
-        for clave, intencion in intenciones.items():
-            if clave in respuestaLower or clave in pregunta:
-                intencion_detectada = intencion
-                break
-
-        productService = re.search(r'"(.*?)"', respuestaLower)
-        productService = productService.group(1) if productService else ""
-
-        print(productService);
+        
 
         if intencion_detectada:
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")

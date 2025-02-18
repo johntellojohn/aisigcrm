@@ -495,7 +495,7 @@ def chatbot():
 
         # Verificar intenciones
         print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
-        prompt_intentions = index.query(
+        intenciones = index.query(
             namespace=name_space,
             id="IntencionesDelBot",
             top_k=1,

@@ -47,6 +47,7 @@ load_dotenv()
 
 PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 @app.route('/index')
 def index():
@@ -542,7 +543,7 @@ def chatbot():
             print("\nPROMPT PARA GPT:\n", prompt)
 
             # Llamar a la API de OpenAI con el formato actualizado
-            client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            
             print("TOKEN:", os.getenv('OPENAI_API_KEY'))
             try:
                 print("TOKEN1:", os.getenv('OPENAI_API_KEY'))

@@ -497,10 +497,14 @@ def chatbot():
         print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
         intenciones = index.query(
             namespace="IntencionesDelBot",
-            vector=query_vector,  # Usar la pregunta como vector de búsqueda
             top_k=5,  # Ajusta según la cantidad de intenciones que esperas
             include_metadata=True
         )
+
+        if sample_query['matches']:
+            print("Metadatos del vector:", sample_query['matches'][0]['metadata'])
+        else:
+            print("No se encontraron vectores en el namespace.")
 
         # Formatear las intenciones en un diccionario
         intenciones_formateadas = {}

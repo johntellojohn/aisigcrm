@@ -544,15 +544,25 @@ def chatbot():
             # Llamar a la API de OpenAI con el formato actualizado
             openai.api_key = os.getenv('OPENAI_API_KEY')
             print("TOKEN:", os.getenv('OPENAI_API_KEY'))
-            # respuesta_gpt = openai.ChatCompletion.create(
-            #     model="gpt-4",
-            #     messages=[
-            #         {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
-            #         {"role": "user", "content": prompt},
-            #     ],
-            #     max_tokens=50,
-            #     temperature=0.5,
-            # )
+            try:
+                respuesta_gpt = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=50,
+                    temperature=0.5,
+                )
+
+                intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
+                print("Intención detectada:", intencion_detectada)
+
+            except openai.error.OpenAIError as e:
+                print("❌ Error en la API de OpenAI:", str(e))
+
+            except Exception as e:
+                print("⚠️ Error desconocido:", str(e))
 
             # intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
             # print("Intención detectada:", intencion_detectada)

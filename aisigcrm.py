@@ -159,11 +159,12 @@ def upsert_data():
     data = request.get_json()
     id_vector = data.get('id_vector')
     values_vector = data.get('values_vector')
+    values_intention = data.get('values_intention')
     name_space = data.get('name_space')
     index_name = data.get('index_name')
     pagina_web_url = data.get('pagina_web_url', '')
 
-    if not index_name or not id_vector or not values_vector or not name_space:
+    if not index_name or not id_vector or not values_vector or not values_intention or not name_space:
         return jsonify(response="Se requiere de la siguiente información (id_vector, values_vector, name_space, index_name)."), 400
 
     try:
@@ -216,25 +217,10 @@ def upsert_data():
         # Buscar el vector con el ID "InstruccionesDelBot"
         instructions_id = "IntencionesDelBot"
         existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
-        values_intructions = """
-                Intenciones y Acciones:
-                Comprar (60%):
-                Condición: El usuario ha seleccionado un PRODUCTO o SERVICIO específico del inventario.
-                Acción: Responderás: "Enviando al pago" + "producto o servicio entre comillas".
-                Nota: Si no hay producto o servicio seleccionado, no realizar esta acción.
-                Agendar (20%):
-                Condición: El usuario ha elegido un HORARIO específico de la disponibilidad.
-                Acción: Responderás: "Enviando al agendamiento" + "horario seleccionado entre comillas".
-                Nota: Si no hay horario seleccionado, no realizar esta acción.
-                Hablar con una persona (15%):
-                Acción: Responderás: "Enviando con un asistente".
-                Manejar Frustración (5%):
-                Condición: Si notas frustración en el usuario.
-                Acción: Responderás: "Lamento escuchar eso".
-                """
-                # Eres un bot encargado de la atención al cliente, atiende al cliente, analizarás si el usuario tiene la siguientes intenciones y realizarás la mas problable. 
-                # PRESENTACIÓN:
-                # No excedas los 15 palabras.
+        
+        values_instructions = """
+            Lista de intenciones:
+        """ + values_intention  
 
         if instructions_id not in existing_vector['vectors']:
             instructions_values = embeddings.embed_query(values_intructions)

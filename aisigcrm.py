@@ -497,8 +497,8 @@ def chatbot():
         print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
         intenciones = index.query(
             namespace=name_space,
-            id="IntencionesDelBot",
-            top_k=1,
+            vector=pregunta,  # Usar la pregunta como vector de búsqueda
+            top_k=5,  # Ajusta según la cantidad de intenciones que esperas
             include_metadata=True
         )
 
@@ -509,6 +509,9 @@ def chatbot():
             descripcion = match['metadata'].get('descripcion')
             if intencion and descripcion:
                 intenciones_formateadas[intencion] = descripcion
+
+        print("Intenciones formateadas:", intenciones_formateadas)
+
         """
         Función para analizar la intención del usuario usando GPT.
         """
@@ -519,7 +522,7 @@ def chatbot():
         """
 
         # Agregar las intenciones y sus descripciones al prompt
-        for intencion, descripcion in intenciones.items():
+        for intencion, descripcion in intenciones_formateadas.items():  # Usar intenciones_formateadas
             prompt += f"- {intencion}: {descripcion}\n"
 
         prompt += f"""
@@ -538,9 +541,8 @@ def chatbot():
         # Extraer la intención detectada por GPT
         intencion_detectada = respuesta_gpt.choices[0].text.strip()
         print(f"\n\n\n **** \n\n\n")
-        print(intencion_detectada)
+        print("Intención detectada:", intencion_detectada)
         print(f"\n\n\n **** \n\n\n")
-
 
 
         intencion_detectada = 'PAGAR'

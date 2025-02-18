@@ -505,6 +505,16 @@ def chatbot():
         intentions = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match]
         print("Intenciones formateadas9999****:", intentions)
 
+        # Formatear las intenciones en un diccionario
+        intenciones_formateadas = {}
+        for match in intenciones['matches']:
+            intencion = match['metadata'].get('intencion')
+            descripcion = match['metadata'].get('descripcion')
+            if intencion and descripcion:
+                intenciones_formateadas[intencion] = descripcion
+
+        print("Intenciones formateadas:", intenciones_formateadas)
+
 
        
 

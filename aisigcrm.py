@@ -502,11 +502,60 @@ def chatbot():
             include_metadata=True
         )
 
+        # Extraer el texto de intenciones desde la respuesta de Pinecone
+        intentions_data = (
+            prompt_intentions.get("matches", [{}])[0]
+            .get("metadata", {})
+            .get("text", "")
+        )
+
+        intenciones_formateadas = {}
+
+        # Intentar convertir el JSON solo si `intentions_data` tiene contenido válido
+        if intentions_data:
+            try:
+                intenciones_formateadas = json.loads(
+                    intentions_data.split("Lista de intenciones:\n")[-1]
+                )
+            except json.JSONDecodeError as e:
+                print(f"Error al procesar JSON de intenciones: {e}")
+
+        print("Intenciones formateadas:", intenciones_formateadas)
+
+        # Si hay intenciones, construimos el prompt
+        if intenciones_formateadas:
+            prompt = "A continuación, se te proporcionará una pregunta o comentario de un usuario.\n"
+            prompt += "Tu tarea es determinar la intención del usuario basándote en las siguientes opciones:\n\n"
+
+            # Agregar intenciones con sus descripciones al prompt
+            for intencion, descripcion in intenciones_formateadas.items():
+                prompt += f"- {intencion}: {descripcion}\n"
+
+            prompt += f'\nPregunta/Comentario del usuario: "{pregunta}"\n'
+            prompt += "Intención detectada:"
+
+            print("\nPROMPT PARA GPT:\n", prompt)
+
+            # Llamar a la API de OpenAI con el formato actualizado
+            respuesta_gpt = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=50,
+                temperature=0.5,
+            )
+
+            intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
+            print("Intención detectada:", intencion_detectada)
+
+
         #intentions = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match]
         
-        print("INTENCIONES ****:", prompt_intentions)
-        intenciones = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match and 'text' in match['metadata']]
-        print("enjauladas ****:", intenciones)
+        #print("INTENCIONES ****:", prompt_intentions)
+        #intenciones = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match and 'text' in match['metadata']]
+        #print("enjauladas ****:", intenciones)
 
         # Formatear las intenciones en un diccionario
         #intenciones_formateadas = {}

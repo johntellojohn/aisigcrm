@@ -532,7 +532,8 @@ def chatbot():
 
         # Llamar a la API de OpenAI
         respuesta_gpt = openai.Completion.create(
-            engine="gpt-4o-mini",  # Puedes usar otro modelo si prefieres
+            engine="gpt-4",  # Puedes usar otro modelo si prefieres
+            #engine="gpt-4gpt-4o-mini",  # Puedes usar otro modelo si prefieres
             prompt=prompt,
             max_tokens=50,  # Limitar la longitud de la respuesta
             temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)

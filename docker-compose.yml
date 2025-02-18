@@ -6,5 +6,7 @@ services:
       - "5010:5010"
     volumes:
       - .:/app
+    environment:
+      NODE_ENV: production
     env_file:
       - .env

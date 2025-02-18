@@ -501,10 +501,6 @@ def chatbot():
             include_metadata=True
         )
 
-        if sample_query['matches']:
-            print("Metadatos del vector:", sample_query['matches'][0]['metadata'])
-        else:
-            print("No se encontraron vectores en el namespace.")
 
         # Formatear las intenciones en un diccionario
         intenciones_formateadas = {}

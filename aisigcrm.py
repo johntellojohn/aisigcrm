@@ -496,8 +496,8 @@ def chatbot():
         # Verificar intenciones
         print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
         intenciones = index.query(
-            namespace=name_space,
-            vector=pregunta,  # Usar la pregunta como vector de búsqueda
+            namespace="IntencionesDelBot",
+            vector=query_vector,  # Usar la pregunta como vector de búsqueda
             top_k=5,  # Ajusta según la cantidad de intenciones que esperas
             include_metadata=True
         )

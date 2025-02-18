@@ -536,25 +536,16 @@ def chatbot():
 
             print("\nPROMPT PARA GPT:\n", prompt)
 
-            try:
-                respuesta_gpt = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=50,
-                    temperature=0.5,
-                )
-
-                intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
-                print("✅ Intención detectada:", intencion_detectada)
-
-            except openai.error.OpenAIError as e:
-                print(f"⚠️ Error de OpenAI: {e}")
-
-            except Exception as e:
-                print(f"⚠️ Error inesperado: {e}")
+            # Llamar a la API de OpenAI con el formato actualizado
+            # respuesta_gpt = openai.ChatCompletion.create(
+            #     model="gpt-4",
+            #     messages=[
+            #         {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
+            #         {"role": "user", "content": prompt},
+            #     ],
+            #     max_tokens=50,
+            #     temperature=0.5,
+            # )
 
             # intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
             # print("Intención detectada:", intencion_detectada)

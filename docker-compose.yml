@@ -1,9 +1,10 @@
-version: '3.8'
 services:
   flask-app:
     build:
       context: .
     ports:
-      - "5010:50010"
+      - "5010:5010"
     volumes:
       - .:/app
+    environment:
+      NODE_ENV: production

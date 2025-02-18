@@ -542,18 +542,18 @@ def chatbot():
             print("\nPROMPT PARA GPT:\n", prompt)
 
             # Llamar a la API de OpenAI con el formato actualizado
-            # respuesta_gpt = openai.ChatCompletion.create(
-            #     model="gpt-4",
-            #     messages=[
-            #         {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
-            #         {"role": "user", "content": prompt},
-            #     ],
-            #     max_tokens=50,
-            #     temperature=0.5,
-            # )
+            respuesta_gpt = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Eres un asistente que clasifica intenciones."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=50,
+                temperature=0.5,
+            )
 
-            # intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
-            # print("Intención detectada:", intencion_detectada)
+            intencion_detectada = respuesta_gpt["choices"][0]["message"]["content"].strip()
+            print("Intención detectada:", intencion_detectada)
 
 
         #intentions = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match]

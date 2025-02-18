@@ -8,5 +8,6 @@ services:
       - .:/app
     environment:
       NODE_ENV: production
+      PYTHONUNBUFFERED: 1  # 🔥 Fuerza a Python a imprimir en tiempo real
     env_file:
       - .env

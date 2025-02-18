@@ -536,7 +536,9 @@ def chatbot():
             # Agregar intenciones con sus descripciones al prompt
             for intencion, descripcion in intenciones_formateadas.items():
                 prompt += f"- {intencion}: {descripcion}\n"
-
+            
+            # Instrucción explícita para devolver "Ninguna" si no hay coincidencia
+            prompt += "\nSi la pregunta del usuario no coincide con ninguna de las opciones anteriores, responde con 'Ninguna'.\n"
             prompt += f'\nPregunta/Comentario del usuario: "{pregunta}"\n'
             prompt += "Intención detectada:"
 
@@ -561,12 +563,30 @@ def chatbot():
 
 
 
-        if intencion_detectada:
+        if intencion_detectada and intencion_detectada.lower() != "ninguna":
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")
 
             # Enviar solicitud a la API /close-connection
             try:
 
+                close_connection_response = requests.post(
+                    'https://sigcrm.pro/close-conection',  
+                    json={"id": user_id_int, "type": intencion_detectada, "index": index_name}  
+                )
+
+                if close_connection_response.status_code == 201 or close_connection_response.status_code == 200:
+                    index.delete(ids=user_id, namespace="user_history")
+                    print("Conexión cerrada exitosamente")
+                    
+                else:
+                    print(f'Error al cerrar la conexión: {close_connection_response.status_code}')
+
+            except Exception as e:
+                print(f'Ocurrió un error al cerrar la conexión: {str(e)}')
+
+        else:
+            print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")
+            try:
                 close_connection_response = requests.post(
                     'https://sigcrm.pro/close-conection',  
                     json={"id": user_id_int, "type": intencion_detectada, "index": index_name}  

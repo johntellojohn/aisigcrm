@@ -547,7 +547,7 @@ def chatbot():
                 print(f'Ocurrió un error al cerrar la conexión: {str(e)}')
 
         else:
-            print("\n\n\nNo se ha detectado ninguna intención específica\n\n\n")
+            print("\n\n\nNo se ha detectado ninguna intención específica*****\n\n\n")
 
         return jsonify(response=respuesta), 200
     

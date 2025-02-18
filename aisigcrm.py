@@ -42,6 +42,7 @@ load_dotenv()
 
 PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+openai.api_key = os.getenv('OPENAI_API_KEY')"
 
 @app.route('/index')
 def index():

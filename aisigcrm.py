@@ -562,7 +562,7 @@ def chatbot():
 
         print(f"\n\n\nINTENTION '{intencion_detectada}'\n\n\n")
 
-        if intencion_detectadaand and intencion_detectada.lower() != "ninguna":
+        if intencion_detectada and intencion_detectada.lower() != "ninguna":
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")
 
             # Enviar solicitud a la API /close-connection

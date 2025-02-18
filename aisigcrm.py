@@ -530,6 +530,9 @@ def chatbot():
         Intención detectada:
         """
 
+        print("PROMPT:", prompt)
+
+
         # Llamar a la API de OpenAI
         respuesta_gpt = openai.Completion.create(
             engine="gpt-4",  # Puedes usar otro modelo si prefieres

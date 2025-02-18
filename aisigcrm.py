@@ -542,6 +542,7 @@ def chatbot():
             print("\nPROMPT PARA GPT:\n", prompt)
 
             # Llamar a la API de OpenAI con el formato actualizado
+            openai.api_key = os.getenv('OPENAI_API_KEY')
             respuesta_gpt = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[

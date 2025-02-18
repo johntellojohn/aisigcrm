@@ -42,7 +42,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 @app.route('/index')
 def index():
-    return "Hello, You Human!"
+    return "Hello, You Human!!"
 
 
 PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')

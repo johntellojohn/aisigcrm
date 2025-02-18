@@ -43,7 +43,6 @@ load_dotenv()
 PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-
 @app.route('/index')
 def index():
     return "Hello, You Human!!"
@@ -538,7 +537,6 @@ def chatbot():
             print("\nPROMPT PARA GPT:\n", prompt)
 
             try:
-                # openai.api_key = os.getenv('OPENAI_API_KEY')
                 respuesta_gpt = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[

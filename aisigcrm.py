@@ -410,13 +410,6 @@ def chatbot():
             include_metadata=True
         )
 
-        prompt_intentions = index.query(
-            namespace=name_space,
-            id="IntencionesDelBot",
-            top_k=1,
-            include_metadata=True
-        )
-
         prompt_history = index.query(
             namespace="user_history",
             id=str(user_id),
@@ -425,8 +418,6 @@ def chatbot():
         )
 
         docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
-
-        intentions = [match['metadata']['text'] for match in prompt_intentions['matches'] if 'metadata' in match]
 
         user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
 
@@ -437,7 +428,6 @@ def chatbot():
         # Crear objetos Document de langchain con el texto de los documentos recuperados
         input_documents = (
             [Document(page_content=text) for text in docs] +
-            [Document(page_content=text) for text in intentions] +
             [Document(page_content=text) for text in user_history]
         )
 
@@ -505,21 +495,53 @@ def chatbot():
 
         # Verificar intenciones
         print(f"\n\n\n Entra a evaluar intenciones: \n\n\n")
+        prompt_intentions = index.query(
+            namespace=name_space,
+            id="IntencionesDelBot",
+            top_k=1,
+            include_metadata=True
+        )
 
-        intenciones = {
-            "enviando con un asistente": "AGENTE",
-            "enviandé al agendamiento": "AGENTE",
-            "enviarte al agendamiento": "AGENTE",
-            "enviando al agendamiento": "AGENTE",
-            "enviaré al pago": "PAGAR",
-            "enviarte al pago": "PAGAR",
-            "enviando al pago": "PAGAR",
-            "terminando la sesión": "SALIR",
-            "lamento": "AGENTE",
-        }
+        # Formatear las intenciones en un diccionario
+        intenciones_formateadas = {}
+        for match in intenciones['matches']:
+            intencion = match['metadata'].get('intencion')
+            descripcion = match['metadata'].get('descripcion')
+            if intencion and descripcion:
+                intenciones_formateadas[intencion] = descripcion
+        """
+        Función para analizar la intención del usuario usando GPT.
+        """
+        # Crear un prompt dinámico para GPT basado en las intenciones obtenidas
+        prompt = f"""
+        A continuación, se te proporcionará una pregunta o comentario de un usuario.
+        Tu tarea es determinar la intención del usuario basándote en las siguientes opciones:
+        """
 
-        respuestaLower = respuesta.lower()  
-        pregunta = pregunta.lower() 
+        # Agregar las intenciones y sus descripciones al prompt
+        for intencion, descripcion in intenciones.items():
+            prompt += f"- {intencion}: {descripcion}\n"
+
+        prompt += f"""
+        Pregunta/Comentario del usuario: "{pregunta}"
+        Intención detectada:
+        """
+
+        # Llamar a la API de OpenAI
+        respuesta_gpt = openai.Completion.create(
+            engine="gpt-4o-mini",  # Puedes usar otro modelo si prefieres
+            prompt=prompt,
+            max_tokens=50,  # Limitar la longitud de la respuesta
+            temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
+        )
+
+        # Extraer la intención detectada por GPT
+        intencion_detectada = respuesta_gpt.choices[0].text.strip()
+        print(f"\n\n\n **** \n\n\n")
+        print(intencion_detectada)
+        print(f"\n\n\n **** \n\n\n")
+
+
 
         intencion_detectada = 'PAGAR'
 

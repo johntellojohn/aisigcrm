@@ -506,54 +506,7 @@ def chatbot():
         print("Intenciones formateadas9999****:", intentions)
 
 
-        # Formatear las intenciones en un diccionario
-        #intenciones_formateadas = {}
-        #for match in intenciones['matches']:
-        #    intencion = match['metadata'].get('intencion')
-        #    descripcion = match['metadata'].get('descripcion')
-        #    if intencion and descripcion:
-        #        intenciones_formateadas[intencion] = descripcion
-
-        #print("Intenciones formateadas:", intenciones_formateadas)
-
-        """
-        Función para analizar la intención del usuario usando GPT.
-        """
-        # Crear un prompt dinámico para GPT basado en las intenciones obtenidas
-        prompt = f"""
-        A continuación, se te proporcionará una pregunta o comentario de un usuario.
-        Tu tarea es determinar la intención del usuario basándote en las siguientes opciones:
-        """
-
-        # Agregar las intenciones y sus descripciones al prompt
-        for intencion, descripcion in intenciones_formateadas.items():  # Usar intenciones_formateadas
-            prompt += f"- {intencion}: {descripcion}\n"
-
-            print("ITENTION *****")
-            print(f"- {intencion}: {descripcion}\n")
-
-        prompt += f"""
-        Pregunta/Comentario del usuario: "{pregunta}"
-        Intención detectada:
-        """
-
-        print("PROMPT:", prompt)
-
-
-        # Llamar a la API de OpenAI
-        #respuesta_gpt = openai.Completion.create(
-        #    engine="gpt-4",  # Puedes usar otro modelo si prefieres
-        #    #engine="gpt-4gpt-4o-mini",  # Puedes usar otro modelo si prefieres
-        #    prompt=prompt,
-        #    max_tokens=50,  # Limitar la longitud de la respuesta
-        #    temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
-        #)
-
-        # Extraer la intención detectada por GPT
-        #intencion_detectada = respuesta_gpt.choices[0].text.strip()
-        print(f"\n\n\n **** \n\n\n")
-        #print("Intención detectada:", intencion_detectada)
-        print(f"\n\n\n **** \n\n\n")
+       
 
 
         intencion_detectada = 'PAGAR'

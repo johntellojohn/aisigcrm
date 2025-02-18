@@ -7,7 +7,7 @@ services:
     volumes:
       - .:/app
     environment:
-      NODE_ENV: production
-      PYTHONUNBUFFERED: 1  # 🔥 Fuerza a Python a imprimir en tiempo real
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
     env_file:
       - .env

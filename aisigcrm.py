@@ -509,14 +509,14 @@ def chatbot():
         print("enjauladas ****:", intenciones)
 
         # Formatear las intenciones en un diccionario
-        intenciones_formateadas = {}
-        for match in intentions['matches']:
-            intencion = match['metadata'].get('intencion')
-            descripcion = match['metadata'].get('descripcion')
-            if intencion and descripcion:
-                intenciones_formateadas[intencion] = descripcion
+        #intenciones_formateadas = {}
+        #for match in intentions['matches']:
+        #    intencion = match['metadata'].get('intencion')
+        #    descripcion = match['metadata'].get('descripcion')
+        #    if intencion and descripcion:
+        #        intenciones_formateadas[intencion] = descripcion
 
-        print("Intenciones formateadas:", intenciones_formateadas)
+        #print("Intenciones formateadas:", intenciones_formateadas)
 
 
        

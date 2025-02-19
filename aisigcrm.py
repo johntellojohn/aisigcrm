@@ -518,10 +518,10 @@ def chatbot():
             #print(count)
             # Eliminación de data
             if count==max_histories:
-            patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
-            userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
-            print(f"CADENA ELIMINADA: {userHistory_delete}")
-            userHistory = userHistory_delete
+                patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
+                userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
+                print(f"CADENA ELIMINADA: {userHistory_delete}")
+                userHistory = userHistory_delete
 
 
             # Buscar el vector con el ID "Prompt"

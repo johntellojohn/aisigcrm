@@ -557,40 +557,17 @@ def chatbot():
                 # Extraer la intención detectada por GPT
                 intencion_detectada = respuesta_gpt.choices[0].message.content.strip()
             except Exception as e:
-                print(f"\n\n\n")
                 print("Error al llamar a la API de OpenAI:", str(e))
-                print(f"\n\n\n")
 
         print(f"\n\n\nINTENTION '{intencion_detectada}'\n\n\n")
 
         # Limpiar caracteres especiales (excepto letras y números)
         intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
 
-        if intencion_limpia and intencion_limpia != "ninguna":
-            print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")
-
-            # Enviar solicitud a la API /close-connection
-            try:
-
-                close_connection_response = requests.post(
-                    'https://sigcrm.pro/close-conection',  
-                    json={"id": user_id_int, "type": intencion_detectada, "index": index_name}  
-                )
-
-                if close_connection_response.status_code == 201 or close_connection_response.status_code == 200:
-                    index.delete(ids=user_id, namespace="user_history")
-                    print("Conexión cerrada exitosamente")
-                    
-                else:
-                    print(f'Error al cerrar la conexión: {close_connection_response.status_code}')
-
-            except Exception as e:
-                print(f'Ocurrió un error al cerrar la conexión: {str(e)}')
-
-        else:
-            print("\n\n\nNo se ha detectado ninguna intención específica*****\n\n\n")
-            return jsonify(response=respuesta), 200
-
+        return jsonify(
+            response=respuesta,
+            intencion=intencion_limpia
+        ), 200
     
     except openai.error.AuthenticationError:
         return jsonify(response="La API key no es válida."), 401

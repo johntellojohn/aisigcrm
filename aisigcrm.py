@@ -552,7 +552,7 @@ def chatbot():
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=50,  # Limitar la longitud de la respuesta
-                    temperature=0.5,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
+                    temperature=0,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
                 )
                 # Extraer la intención detectada por GPT
                 intencion_detectada = respuesta_gpt.choices[0].message.content.strip()

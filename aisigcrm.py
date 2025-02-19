@@ -538,7 +538,7 @@ def chatbot():
                 prompt += f"- {intencion}: {descripcion}\n"
             
             # Instrucción explícita para devolver "Ninguna" si no hay coincidencia
-            prompt += "\nSi la pregunta del usuario no coincide con ninguna de las opciones anteriores, responde con 'Ninguna'.\n"
+            prompt += "\nSi la pregunta del usuario no coincide con ninguna de las opciones anteriores, responde con 'Ninguna' (sin punto ni otro carácter adicional).\n"
             prompt += f'\nPregunta/Comentario del usuario: "{pregunta}"\n'
             prompt += "Intención detectada:"
 

@@ -589,8 +589,8 @@ def chatbot():
 
         else:
             print("\n\n\nNo se ha detectado ninguna intención específica*****\n\n\n")
+            return jsonify(response=respuesta), 200
 
-        return jsonify(response=respuesta), 200
     
     except openai.error.AuthenticationError:
         return jsonify(response="La API key no es válida."), 401

@@ -408,96 +408,6 @@ def chatbot():
         index = pc.Index(data.get('index'))  # Utilizar el índice proporcionado en la solicitud
         index_name = data.get('index')
 
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-        query_vector = embeddings.embed_query(pregunta)
-        result = index.query(
-            namespace=name_space,
-            vector=query_vector,
-            top_k=1,
-            include_metadata=True
-        )
-
-        prompt_history = index.query(
-            namespace="user_history",
-            id=str(user_id),
-            top_k=1,
-            include_metadata=True
-        )
-
-        docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
-
-        user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
-
-        user_history_string = ''.join(user_history)
-
-        print(f"\n\n\nSIIIIIIIIIIIIII: {user_history_string}\n\n\n")
-
-        # Crear objetos Document de langchain con el texto de los documentos recuperados
-        input_documents = (
-            [Document(page_content=text) for text in docs] +
-            [Document(page_content=text) for text in user_history]
-        )
-
-        #print(input_documents)
-
-        llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
-        chain = load_qa_chain(llm, chain_type="stuff")
-
-        # Usar el full_prompt como parte del contexto del sistema
-        respuesta = chain.run(
-            input_documents=input_documents,
-            question=pregunta
-        )
-
-        # Historial nuevo de usuario
-        userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
-        count = userHistory.count("- Respuesta:")
-        #print(count)
-        # Eliminación de data
-        if count==max_histories:
-            patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
-            userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
-            print(f"CADENA ELIMINADA: {userHistory_delete}")
-            userHistory = userHistory_delete
-
-
-        # Buscar el vector con el ID "Prompt"
-        instructions_values = embeddings.embed_query(userHistory)
-
-        existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
-
-        current_datetime = datetime.now().isoformat()
-
-        if user_id not in existing_new_vector['vectors']:
-            index.upsert(
-                vectors=[
-                    {
-                        "id": user_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": "Historial de conversacion:\n" + userHistory,
-                            "date": current_datetime
-                        }
-                    }
-                ],
-                namespace="user_history"
-            )
-
-        else:
-            index.delete(ids=user_id, namespace="user_history")
-            index.upsert(
-                vectors=[
-                    {
-                        "id": user_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": userHistory,
-                            "date": current_datetime
-                        }
-                    }
-                ],
-                namespace="user_history"
-            )
 
 
         # Verificar intenciones
@@ -531,6 +441,7 @@ def chatbot():
 
         # Si hay intenciones, construimos el prompt
         if intenciones_formateadas:
+            intencion_detectada = "ninguna"
             prompt = "A continuación, se te proporcionará una pregunta o comentario de un usuario.\n"
             prompt += "Tu tarea es determinar la intención del usuario basándote en las siguientes opciones:\n\n"
 
@@ -564,11 +475,100 @@ def chatbot():
         # Limpiar caracteres especiales (excepto letras y números)
         intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
 
-        # Crear una estructura de respuesta más organizada
-        respuestaConIntention = {
-            "respuesta": respuesta,
-            "intencion": intencion_limpia  # Intención detectada
-        }
+        if intencion_detectada == "ninguna":
+            # Consultar con el chat bot
+            embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+            query_vector = embeddings.embed_query(pregunta)
+            result = index.query(
+                namespace=name_space,
+                vector=query_vector,
+                top_k=1,
+                include_metadata=True
+            )
+
+            prompt_history = index.query(
+                namespace="user_history",
+                id=str(user_id),
+                top_k=1,
+                include_metadata=True
+            )
+
+            docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
+            user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
+            user_history_string = ''.join(user_history)
+
+            # Crear objetos Document de langchain con el texto de los documentos recuperados
+            input_documents = (
+                [Document(page_content=text) for text in docs] +
+                [Document(page_content=text) for text in user_history]
+            )
+
+            llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
+            chain = load_qa_chain(llm, chain_type="stuff")
+
+            # Usar el full_prompt como parte del contexto del sistema
+            respuesta = chain.run(
+                input_documents=input_documents,
+                question=pregunta
+            )
+
+            # Historial nuevo de usuario
+            userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
+            count = userHistory.count("- Respuesta:")
+            #print(count)
+            # Eliminación de data
+            if count==max_histories:
+            patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
+            userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
+            print(f"CADENA ELIMINADA: {userHistory_delete}")
+            userHistory = userHistory_delete
+
+
+            # Buscar el vector con el ID "Prompt"
+            instructions_values = embeddings.embed_query(userHistory)
+            existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
+            current_datetime = datetime.now().isoformat()
+
+            if user_id not in existing_new_vector['vectors']:
+                index.upsert(
+                    vectors=[
+                        {
+                            "id": user_id,
+                            "values": instructions_values,
+                            "metadata": {
+                                "text": "Historial de conversacion:\n" + userHistory,
+                                "date": current_datetime
+                            }
+                        }
+                    ],
+                    namespace="user_history"
+                )
+
+            else:
+                index.delete(ids=user_id, namespace="user_history")
+                index.upsert(
+                    vectors=[
+                        {
+                            "id": user_id,
+                            "values": instructions_values,
+                            "metadata": {
+                                "text": userHistory,
+                                "date": current_datetime
+                            }
+                        }
+                    ],
+                    namespace="user_history"
+                )
+            
+            respuestaConIntention = {
+                "respuesta": respuesta,
+                "intencion": intencion_limpia
+            }
+        else:
+            respuestaConIntention = {
+                "respuesta": "No se sigue consultando con el chat bot",
+                "intencion": intencion_limpia
+            }
 
         return jsonify(respuestaConIntention), 200
     

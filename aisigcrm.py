@@ -475,7 +475,7 @@ def chatbot():
         # Limpiar caracteres especiales (excepto letras y números)
         intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
 
-        if intencion_detectada == "ninguna":
+        if intencion_limpia == "ninguna":
             # Consultar con el chat bot
             embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
             query_vector = embeddings.embed_query(pregunta)

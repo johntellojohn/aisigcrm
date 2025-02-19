@@ -23,6 +23,7 @@ from langchain.chains.question_answering import load_qa_chain
 from langchain.schema import Document
 from dotenv import load_dotenv
 import sys
+import re
 
 
 print("Este es un mensaje de prueba", flush=True)  # Método 1
@@ -562,7 +563,10 @@ def chatbot():
 
         print(f"\n\n\nINTENTION '{intencion_detectada}'\n\n\n")
 
-        if intencion_detectada and intencion_detectada.lower() != "ninguna":
+        # Limpiar caracteres especiales (excepto letras y números)
+        intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
+
+        if intencion_limpia and intencion_limpia != "ninguna":
             print(f"\n\n\nEl usuario tiene la intención de '{intencion_detectada}'\n\n\n")
 
             # Enviar solicitud a la API /close-connection

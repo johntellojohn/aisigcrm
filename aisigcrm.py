@@ -564,10 +564,13 @@ def chatbot():
         # Limpiar caracteres especiales (excepto letras y números)
         intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
 
-        return jsonify(
-            response=respuesta,
-            intencion=intencion_limpia
-        ), 200
+        # Crear una estructura de respuesta más organizada
+        respuestaConIntention = {
+            "respuesta": respuesta,
+            "intencion": intencion_limpia  # Intención detectada
+        }
+
+        return jsonify(respuestaConIntention), 200
     
     except openai.error.AuthenticationError:
         return jsonify(response="La API key no es válida."), 401

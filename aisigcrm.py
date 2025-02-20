@@ -410,167 +410,98 @@ def chatbot():
 
 
 
-        # Verificar intenciones
-        intencion_detectada = False
-        prompt_intentions = index.query(
+       
+
+
+        # Consultar con el chat bot
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        query_vector = embeddings.embed_query(pregunta)
+        result = index.query(
             namespace=name_space,
-            id="IntencionesDelBot",
+            vector=query_vector,
             top_k=1,
             include_metadata=True
         )
 
-        # Extraer el texto de intenciones desde la respuesta de Pinecone
-        intentions_data = (
-            prompt_intentions.get("matches", [{}])[0]
-            .get("metadata", {})
-            .get("text", "")
+        prompt_history = index.query(
+            namespace="user_history",
+            id=str(user_id),
+            top_k=1,
+            include_metadata=True
         )
 
-        intenciones_formateadas = {}
+        docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
+        user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
+        user_history_string = ''.join(user_history)
 
-        # Intentar convertir el JSON solo si `intentions_data` tiene contenido válido
-        if intentions_data:
-            try:
-                intenciones_formateadas = json.loads(
-                    intentions_data.split("Lista de intenciones:\n")[-1]
-                )
-            except json.JSONDecodeError as e:
-                print(f"Error al procesar JSON de intenciones: {e}")
+        # Crear objetos Document de langchain con el texto de los documentos recuperados
+        input_documents = (
+            [Document(page_content=text) for text in docs] +
+            [Document(page_content=text) for text in user_history]
+        )
 
-        print("Intenciones formateadas:", intenciones_formateadas)
+        llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
+        chain = load_qa_chain(llm, chain_type="stuff")
 
-        # Si hay intenciones, construimos el prompt
-        if intenciones_formateadas:
-            intencion_detectada = "ninguna"
-            prompt = "A continuación, se te proporcionará una pregunta o comentario de un usuario.\n"
-            prompt += "Tu tarea es determinar la intención del usuario basándote en las siguientes opciones:\n\n"
+        # Usar el full_prompt como parte del contexto del sistema
+        respuesta = chain.run(
+            input_documents=input_documents,
+            question=pregunta
+        )
 
-            # Agregar intenciones con sus descripciones al prompt
-            for intencion, descripcion in intenciones_formateadas.items():
-                prompt += f"- {intencion}: {descripcion}\n"
-            
-            # Instrucción explícita para devolver "Ninguna" si no hay coincidencia
-            prompt += "\nSi la pregunta del usuario no coincide con ninguna de las opciones anteriores, responde con 'Ninguna' (sin punto ni otro carácter adicional).\n"
-            prompt += f'\nPregunta/Comentario del usuario: "{pregunta}"\n'
-            prompt += "Intención detectada:"
-
-            # Llamar a la API de OpenAI con el formato actualizado
-            try:
-                respuesta_gpt = client.chat.completions.create(
-                    model="gpt-3.5-turbo",  # Usar un modelo válido
-                    messages=[
-                        {"role": "system", "content": "Eres un asistente que ayuda a detectar intenciones."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=50,  # Limitar la longitud de la respuesta
-                    temperature=0,  # Controlar la creatividad (0 = más determinista, 1 = más creativo)
-                )
-                # Extraer la intención detectada por GPT
-                intencion_detectada = respuesta_gpt.choices[0].message.content.strip()
-            except Exception as e:
-                print("Error al llamar a la API de OpenAI:", str(e))
-
-        print(f"\n\n\nINTENTION '{intencion_detectada}'\n\n\n")
-
-        # Limpiar caracteres especiales (excepto letras y números)
-        intencion_limpia = re.sub(r'[^a-zA-Z0-9áéíóúüÁÉÍÓÚÜñÑ ]', '', intencion_detectada).strip().lower()
-
-        if intencion_limpia == "ninguna":
-            # Consultar con el chat bot
-            embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-            query_vector = embeddings.embed_query(pregunta)
-            result = index.query(
-                namespace=name_space,
-                vector=query_vector,
-                top_k=1,
-                include_metadata=True
-            )
-
-            prompt_history = index.query(
-                namespace="user_history",
-                id=str(user_id),
-                top_k=1,
-                include_metadata=True
-            )
-
-            docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
-            user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
-            user_history_string = ''.join(user_history)
-
-            # Crear objetos Document de langchain con el texto de los documentos recuperados
-            input_documents = (
-                [Document(page_content=text) for text in docs] +
-                [Document(page_content=text) for text in user_history]
-            )
-
-            llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
-            chain = load_qa_chain(llm, chain_type="stuff")
-
-            # Usar el full_prompt como parte del contexto del sistema
-            respuesta = chain.run(
-                input_documents=input_documents,
-                question=pregunta
-            )
-
-            # Historial nuevo de usuario
-            userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
-            count = userHistory.count("- Respuesta:")
-            #print(count)
-            # Eliminación de data
-            if count==max_histories:
-                patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
-                userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
-                print(f"CADENA ELIMINADA: {userHistory_delete}")
-                userHistory = userHistory_delete
+        # Historial nuevo de usuario
+        userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
+        count = userHistory.count("- Respuesta:")
+        #print(count)
+        # Eliminación de data
+        if count==max_histories:
+            patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
+            userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
+            print(f"CADENA ELIMINADA: {userHistory_delete}")
+            userHistory = userHistory_delete
 
 
-            # Buscar el vector con el ID "Prompt"
-            instructions_values = embeddings.embed_query(userHistory)
-            existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
-            current_datetime = datetime.now().isoformat()
+        # Buscar el vector con el ID "Prompt"
+        instructions_values = embeddings.embed_query(userHistory)
+        existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
+        current_datetime = datetime.now().isoformat()
 
-            if user_id not in existing_new_vector['vectors']:
-                index.upsert(
-                    vectors=[
-                        {
-                            "id": user_id,
-                            "values": instructions_values,
-                            "metadata": {
-                                "text": "Historial de conversacion:\n" + userHistory,
-                                "date": current_datetime
-                            }
+        if user_id not in existing_new_vector['vectors']:
+            index.upsert(
+                vectors=[
+                    {
+                        "id": user_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": "Historial de conversacion:\n" + userHistory,
+                            "date": current_datetime
                         }
-                    ],
-                    namespace="user_history"
-                )
+                    }
+                ],
+                namespace="user_history"
+            )
 
-            else:
-                index.delete(ids=user_id, namespace="user_history")
-                index.upsert(
-                    vectors=[
-                        {
-                            "id": user_id,
-                            "values": instructions_values,
-                            "metadata": {
-                                "text": userHistory,
-                                "date": current_datetime
-                            }
-                        }
-                    ],
-                    namespace="user_history"
-                )
-            
-            respuestaConIntention = {
-                "respuesta": respuesta,
-                "intencion": intencion_limpia
-            }
         else:
-            respuestaConIntention = {
-                "respuesta": "No se sigue consultando con el chat bot",
-                "intencion": intencion_limpia
-            }
+            index.delete(ids=user_id, namespace="user_history")
+            index.upsert(
+                vectors=[
+                    {
+                        "id": user_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": userHistory,
+                            "date": current_datetime
+                        }
+                    }
+                ],
+                namespace="user_history"
+            )
+        
+        respuestaIA = {
+            "respuesta": respuesta
+        }
 
-        return jsonify(respuestaConIntention), 200
+        return jsonify(respuestaIA), 200
     
     except openai.error.AuthenticationError:
         return jsonify(response="La API key no es válida."), 401

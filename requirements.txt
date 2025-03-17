@@ -1,15 +1,16 @@
 Flask
-openai
+openai==1.63.2
 pandas
 Unidecode
 scikit-learn
 bs4
 google-cloud-vision
-langchain-community
-pinecone
-#pinecone-client
+pinecone-client==5.0.1
+langchain==0.3.19
+langchain-community==0.3.18
+langchain-core==0.3.37
 langchain-openai==0.3.6
-#langchain-openai
+langchain-text-splitters==0.3.6
 PyPDF2
 python-docx
 openpyxl
@@ -21,7 +22,5 @@ openpyxl
 # pip install langchain-core==0.3.37
 # pip install langchain-openai==0.3.6
 # pip install langchain-text-splitters==0.3.6
-# pip install PyPDF2
-# pip install python-docx
-# pip install openpyxl
+
 

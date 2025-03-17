@@ -14,28 +14,33 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from google.cloud import vision
 import openai
+import sys
+import re
+import requests
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from pinecone import Pinecone, ServerlessSpec
 from langchain_openai import ChatOpenAI  
 from langchain.chains.question_answering import load_qa_chain
 from langchain.schema import Document
 from dotenv import load_dotenv
-import sys
-import re
+from PyPDF2 import PdfReader
+from io import BytesIO
+from docx import Document
 
 
-print("Este es un mensaje de prueba", flush=True)  # Método 1
-sys.stdout.flush()  # Método 2
+print("Este es un mensaje de prueba", flush=True)  # M  todo 1
+sys.stdout.flush()  # M  todo 2
 
+load_dotenv()
 
 # Obtener credenciales desde .env
-os.environ["PINECONE_API_KEY"] = os.getenv("PINECONE_API_KEY", "")
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "")
+os.environ["PINECONE_API_KEY"] = os.getenv('PINECONE_API_KEY')
+os.environ["OPENAI_API_KEY"] = os.getenv('OPENAI_API_KEY')
 
 # Inicializar Pinecone
-pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
+pc = Pinecone(os.getenv('PINECONE_API_KEY'))
 
 
 app = Flask(__name__)
@@ -44,19 +49,16 @@ app = Flask(__name__)
 ############
 # Chat Bot #
 ############
-load_dotenv()
 
-PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')
+
+PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
 
 @app.route('/index')
 def index():
     return "Hello, You Human!!"
-
-
-PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY_PRUEBAS')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 @app.route('/api/getData', methods=['GET'])
 def get_data():
@@ -524,6 +526,120 @@ def delete_history():
         return jsonify(response="La API key no es válida."), 401
     except Exception as e:
         return jsonify(response=f"Ocurrió un error: {str(e)}"), 500
+
+@app.route('/api/upsertFile', methods=['POST'])
+def upsert_file():
+    data = request.get_json()
+    id_vector = data.get('id_vector')
+    file_url = data.get('link_file')  # URL pública del archivo
+    type_file = data.get('type_file')  # Tipo de archivo: pdf, docx, txt
+    name_space = data.get('name_space')
+    index_name = data.get('index')
+
+    if not index_name or not id_vector or not file_url or not name_space or not type_file:
+        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index_name)."), 400
+
+    try:
+        # Descargar el archivo desde la URL
+        response = requests.get(file_url)
+        response.raise_for_status()  # Lanza una excepción si la descarga falla
+
+        # Extraer el contenido según el tipo de archivo
+        text = ""
+        if type_file == "pdf":
+            # Extraer texto de un PDF
+            pdf_file = BytesIO(response.content)
+            reader = PdfReader(pdf_file)
+            for page in reader.pages:
+                text += page.extract_text()
+        elif type_file in ["doc", "docx"]:
+            # Extraer texto de un DOC o DOCX usando textract
+            file_bytes = BytesIO(response.content)
+            text = textract.process(file_bytes, extension=type_file).decode('utf-8')
+        elif type_file == "txt":
+            # Extraer texto de un TXT
+            text = response.text
+        elif type_file in ["xls", "xlsx"]:
+            # Extraer texto de un Excel
+            excel_file = BytesIO(response.content)
+            if type_file == "xls":
+                df = pd.read_excel(excel_file, engine='xlrd')  # Para archivos .xls
+            else:
+                df = pd.read_excel(excel_file, engine='openpyxl')  # Para archivos .xlsx
+            # Convertir el DataFrame a texto
+            text = df.to_string(index=False)
+        else:
+            return jsonify(response="Tipo de archivo no soportado. Use pdf, docx, txt, xls o xlsx."), 400
+
+        # Verificar si se extrajo texto correctamente
+        if not text:
+            return jsonify(response="No se pudo extraer texto del archivo."), 400
+
+        # Conexión a Pinecone
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+
+        # Verificar si el índice existe, si no, crearlo
+        if index_name not in pc.list_indexes().names():
+            pc.create_index(
+                name=index_name,
+                dimension=1536,
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
+            )
+
+        index = pc.Index(index_name)
+
+        # Embeddings
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+
+        # Crear el contenido para el metadata
+        values_intructions = f"""
+            Contenido del archivo ({type_file}):
+            {text}
+        """
+
+        # Buscar el vector con el ID "files"
+        instructions_id = "files"
+        existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
+
+        # Si el vector no existe, crearlo; si existe, actualizarlo
+        if instructions_id not in existing_vector['vectors']:
+            instructions_values = embeddings.embed_query(values_intructions)
+            index.upsert(
+                vectors=[
+                    {
+                        "id": instructions_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": values_intructions
+                        }
+                    }
+                ],
+                namespace=name_space
+            )
+        else:
+            index.delete(ids=instructions_id, namespace=name_space)
+            instructions_values = embeddings.embed_query(values_intructions)
+            index.upsert(
+                vectors=[
+                    {
+                        "id": instructions_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": values_intructions
+                        }
+                    }
+                ],
+                namespace=name_space
+            )
+
+        return "Información ingresada con éxito", 200
+
+    except Exception as e:
+        return f"Error: {str(e)}", 500
 
 
 ###############

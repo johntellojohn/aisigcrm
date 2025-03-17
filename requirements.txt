@@ -8,3 +8,18 @@ google-cloud-vision
 langchain-community
 pinecone-client
 langchain-openai
+PyPDF2
+python-docx
+openpyxl
+
+# pip install openai==1.63.2
+# pip install pinecone-client==5.0.1
+# pip install langchain==0.3.19
+# pip install langchain-community==0.3.18
+# pip install langchain-core==0.3.37
+# pip install langchain-openai==0.3.6
+# pip install langchain-text-splitters==0.3.6
+# pip install PyPDF2
+# pip install python-docx
+# pip install openpyxl
+

@@ -8,7 +8,8 @@ google-cloud-vision
 langchain-community
 pinecone
 #pinecone-client
-langchain-openai
+langchain-openai==0.3.6
+#langchain-openai
 PyPDF2
 python-docx
 openpyxl

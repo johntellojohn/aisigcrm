@@ -531,8 +531,9 @@ def delete_history():
 def upsert_file():
     data = request.get_json()
     id_vector = data.get('id_vector')
-    file_url = data.get('link_file')  # URL pública del archivo
-    type_file = data.get('type_file')  # Tipo de archivo: pdf, docx, txt
+    file_url_id = data.get('link_file_id') 
+    file_url = data.get('link_file')
+    type_file = data.get('type_file') 
     name_space = data.get('name_space')
     index_name = data.get('index')
 
@@ -602,7 +603,7 @@ def upsert_file():
         """
 
         # Buscar el vector con el ID "files"
-        instructions_id = "files"
+        instructions_id = "file" + file_url_id
         existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
 
         # Si el vector no existe, crearlo; si existe, actualizarlo

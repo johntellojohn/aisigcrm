@@ -6,7 +6,8 @@ scikit-learn
 bs4
 google-cloud-vision
 langchain-community
-pinecone-client
+pinecone
+#pinecone-client
 langchain-openai
 PyPDF2
 python-docx

@@ -14,7 +14,7 @@ langchain-text-splitters==0.3.6
 PyPDF2
 python-docx
 openpyxl
-mammoth==1.0.9
+mammoth
 
 # pip install openai==1.63.2
 # pip install pinecone-client==5.0.1

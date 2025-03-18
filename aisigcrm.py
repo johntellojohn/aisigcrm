@@ -16,7 +16,7 @@ from google.cloud import vision
 import openai
 import sys
 import re
-import requests
+import mammoth
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -27,7 +27,6 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from io import BytesIO
-from docx import Document
 
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
@@ -391,7 +390,6 @@ def delete_namespace():
 
 @app.route('/api/chatbot', methods=['POST'])
 def chatbot():
-    
     # Cuerpo
     data = request.get_json()
     pregunta = data.get('question')
@@ -409,11 +407,6 @@ def chatbot():
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
         index = pc.Index(data.get('index'))  # Utilizar el índice proporcionado en la solicitud
         index_name = data.get('index')
-
-
-
-       
-
 
         # Consultar con el chat bot
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
@@ -438,8 +431,8 @@ def chatbot():
 
         # Crear objetos Document de langchain con el texto de los documentos recuperados
         input_documents = (
-            [Document(page_content=text) for text in docs] +
-            [Document(page_content=text) for text in user_history]
+            [Document(text) for text in docs] +  # Pasar el texto directamente
+            [Document(text) for text in user_history]  # Pasar el texto directamente
         )
 
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
@@ -505,10 +498,11 @@ def chatbot():
 
         return jsonify(respuestaIA), 200
     
-    except openai.error.AuthenticationError:
-        return jsonify(response="La API key no es válida."), 401
     except Exception as e:
-        return jsonify(response=f"Ocurrió un error: {str(e)}"), 500
+        return jsonify({
+            "response": f"Ocurrió un error: {str(e)}",
+            # "traceback": error_traceback  # Incluye el rastreo completo del error
+        }), 500
 
 @app.route('/api/deleteHistory', methods=['DELETE'])
 def delete_history():
@@ -553,10 +547,24 @@ def upsert_file():
             reader = PdfReader(pdf_file)
             for page in reader.pages:
                 text += page.extract_text()
-        elif type_file in ["doc", "docx"]:
-            # Extraer texto de un DOC o DOCX usando textract
-            file_bytes = BytesIO(response.content)
-            text = textract.process(file_bytes, extension=type_file).decode('utf-8')
+
+        elif type_file == "docx":
+            file_stream = BytesIO(response.content)
+            result = mammoth.extract_raw_text(file_stream)
+            # result.value es ya un string, no necesita to_string()
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOCX"
+
+        elif type_file == "doc":
+            file_stream = BytesIO(response.content)
+            result = mammoth.extract_raw_text(file_stream)
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOC"
+        
         elif type_file == "txt":
             # Extraer texto de un TXT
             text = response.text
@@ -572,9 +580,13 @@ def upsert_file():
         else:
             return jsonify(response="Tipo de archivo no soportado. Use pdf, docx, txt, xls o xlsx."), 400
 
+        
+
         # Verificar si se extrajo texto correctamente
         if not text:
             return jsonify(response="No se pudo extraer texto del archivo."), 400
+        
+
 
         # Conexión a Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
@@ -602,9 +614,11 @@ def upsert_file():
             {text}
         """
 
+        
         # Buscar el vector con el ID "files"
         instructions_id = "file" + file_url_id
         existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
+
 
         # Si el vector no existe, crearlo; si existe, actualizarlo
         if instructions_id not in existing_vector['vectors']:

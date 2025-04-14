@@ -14,6 +14,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from google.cloud import vision
 import openai
+import traceback
 import sys
 import re
 import mammoth
@@ -499,9 +500,14 @@ def chatbot():
         return jsonify(respuestaIA), 200
     
     except Exception as e:
+        exc_type, exc_obj, tb = sys.exc_info()
+        line_number = tb.tb_lineno
+        filename = tb.tb_frame.f_code.co_filename
         return jsonify({
             "response": f"Ocurrió un error: {str(e)}",
-            # "traceback": error_traceback  # Incluye el rastreo completo del error
+            "archivo": filename,
+            "linea": line_number,
+            "tipo": str(exc_type.__name__)
         }), 500
 
 @app.route('/api/deleteHistory', methods=['DELETE'])
@@ -523,6 +529,141 @@ def delete_history():
 
 @app.route('/api/upsertFile', methods=['POST'])
 def upsert_file():
+    data = request.get_json()
+    id_vector = data.get('id_vector')
+    file_url_id = data.get('link_file_id') 
+    file_url = data.get('link_file')
+    type_file = data.get('type_file') 
+    name_space = data.get('name_space')
+    index_name = data.get('index')
+
+    if not index_name or not id_vector or not file_url or not name_space or not type_file:
+        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index_name)."), 400
+
+    try:
+        # Descargar el archivo desde la URL
+        response = requests.get(file_url)
+        response.raise_for_status()  # Lanza una excepción si la descarga falla
+
+        # Extraer el contenido según el tipo de archivo
+        text = ""
+        if type_file == "pdf":
+            # Extraer texto de un PDF
+            pdf_file = BytesIO(response.content)
+            reader = PdfReader(pdf_file)
+            for page in reader.pages:
+                text += page.extract_text()
+
+        elif type_file == "docx":
+            file_stream = BytesIO(response.content)
+            result = mammoth.extract_raw_text(file_stream)
+            # result.value es ya un string, no necesita to_string()
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOCX"
+
+        elif type_file == "doc":
+            file_stream = BytesIO(response.content)
+            result = mammoth.extract_raw_text(file_stream)
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOC"
+        
+        elif type_file == "txt":
+            # Extraer texto de un TXT
+            text = response.text
+        elif type_file in ["xls", "xlsx"]:
+            # Extraer texto de un Excel
+            excel_file = BytesIO(response.content)
+            if type_file == "xls":
+                df = pd.read_excel(excel_file, engine='xlrd')  # Para archivos .xls
+            else:
+                df = pd.read_excel(excel_file, engine='openpyxl')  # Para archivos .xlsx
+            # Convertir el DataFrame a texto
+            text = df.to_string(index=False)
+        else:
+            return jsonify(response="Tipo de archivo no soportado. Use pdf, docx, txt, xls o xlsx."), 400
+
+        
+
+        # Verificar si se extrajo texto correctamente
+        if not text:
+            return jsonify(response="No se pudo extraer texto del archivo."), 400
+        
+
+
+        # Conexión a Pinecone
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+
+        # Verificar si el índice existe, si no, crearlo
+        if index_name not in pc.list_indexes().names():
+            pc.create_index(
+                name=index_name,
+                dimension=1536,
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
+            )
+
+        index = pc.Index(index_name)
+
+        # Embeddings
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+
+        # Crear el contenido para el metadata
+        values_intructions = f"""
+            Contenido del archivo ({type_file}):
+            {text}
+        """
+
+        
+        # Buscar el vector con el ID "files"
+        instructions_id = "file" + file_url_id
+        existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
+
+
+        # Si el vector no existe, crearlo; si existe, actualizarlo
+        if instructions_id not in existing_vector['vectors']:
+            instructions_values = embeddings.embed_query(values_intructions)
+            index.upsert(
+                vectors=[
+                    {
+                        "id": instructions_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": values_intructions
+                        }
+                    }
+                ],
+                namespace=name_space
+            )
+        else:
+            index.delete(ids=instructions_id, namespace=name_space)
+            instructions_values = embeddings.embed_query(values_intructions)
+            index.upsert(
+                vectors=[
+                    {
+                        "id": instructions_id,
+                        "values": instructions_values,
+                        "metadata": {
+                            "text": values_intructions
+                        }
+                    }
+                ],
+                namespace=name_space
+            )
+
+        return "Información ingresada con éxito", 200
+
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
+@app.route('/api/upsertFileGeneral', methods=['POST'])
+def upsert_file_general():
     data = request.get_json()
     id_vector = data.get('id_vector')
     file_url_id = data.get('link_file_id') 

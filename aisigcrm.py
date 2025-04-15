@@ -55,6 +55,41 @@ PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
+def procesar_json_con_pregunta(json_gpt, pregunta, llm):
+    if isinstance(json_gpt, dict) and json_gpt:
+        prompt_json_completo = f"""
+        Eres un asistente que completa campos vacíos en un JSON con base en un mensaje del usuario.
+
+        Reglas:
+        - Solo debes completar los campos vacíos.
+        - No modifiques los campos que ya tienen valores.
+        - No inventes información.
+        - Si no encuentras datos en el mensaje, deja los campos tal como están.
+        - Tu respuesta debe ser solo el JSON, sin texto adicional, sin comentarios, sin formato Markdown, sin usar ```.
+
+        Mensaje del usuario:
+        "{pregunta}"
+
+        JSON actual:
+        {json_gpt}
+
+        Devuélveme solo el JSON actualizado en una sola línea, sin ningún texto adicional.
+        """
+
+        json_completado_raw = llm.predict(prompt_json_completo)
+
+        full_prompt = f"""
+        Este es el json a procesar.
+        {json_completado_raw}
+
+        Pregunta del usuario:
+        {pregunta}
+        """
+    else:
+        json_completado_raw = False
+        full_prompt = pregunta
+
+    return json_completado_raw, full_prompt
 
 @app.route('/index')
 def index():
@@ -397,7 +432,7 @@ def chatbot():
     user_id = data.get('user_id') 
     max_histories = data.get('max_histories', 10)
     name_space = data.get('name_space', 'real') 
-    json_gpt = data.get('json_gpt')  
+    json_gpt = data.get('json_gpt')
 
     # Variables
     user_id_int = int(user_id)
@@ -412,7 +447,6 @@ def chatbot():
 
         # Consultar con el chat bot
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-
 
 
         query_vector = embeddings.embed_query(pregunta)
@@ -435,8 +469,6 @@ def chatbot():
         user_history_string = ''.join(user_history)
         
 
-        # return jsonify(docs), 200
-
         # Crear objetos Document de langchain con el texto de los documentos recuperados
         input_documents = (
             [Document(text) for text in docs] +  # Pasar el texto directamente
@@ -446,40 +478,8 @@ def chatbot():
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
         chain = load_qa_chain(llm, chain_type="stuff")
 
-        # Verificar si el mensaje tiene informacion para llenar el json
-        prompt_json_completo = f"""
-        Eres un asistente que completa campos vacíos en un JSON con base en un mensaje del usuario.
-
-        Reglas:
-        - Solo debes completar los campos vacíos.
-        - No modifiques los campos que ya tienen valores.
-        - No inventes información.
-        - Si no encuentras datos en el mensaje, deja los campos tal como están.
-        - Tu respuesta debe ser solo el JSON, sin texto adicional, sin comentarios, sin formato Markdown, sin usar ```.
-
-        Mensaje del usuario:
-        "{pregunta}"
-
-        JSON actual:
-        {json_gpt}
-
-        Devuélveme solo el JSON actualizado en una sola línea, sin ningún texto adicional.
-        """
-
-        # Ejecutar la predicción de GPT
-        json_completado_raw = llm.predict(prompt_json_completo)
-
-        # return jsonify(json_completado_raw), 200
-        
-
-        # Pregunta con json de Datos
-        full_prompt = f"""
-        Este es el json a procesar.
-        {json_completado_raw}
-
-        Pregunta del usuario:
-        {pregunta}
-        """
+        # Procesar el JSON con la pregunta
+        json_completado_raw, full_prompt = procesar_json_con_pregunta(json_gpt, pregunta, llm)
 
         # Usar el full_prompt como parte del contexto del sistema
         respuesta = chain.run(
@@ -490,7 +490,7 @@ def chatbot():
         # Historial nuevo de usuario
         userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
         count = userHistory.count("- Respuesta:")
-        #print(count)
+
         # Eliminación de data
         if count==max_histories:
             patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)

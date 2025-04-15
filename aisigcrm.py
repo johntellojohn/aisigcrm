@@ -397,6 +397,7 @@ def chatbot():
     user_id = data.get('user_id') 
     max_histories = data.get('max_histories', 10)
     name_space = data.get('name_space', 'real') 
+    json_gpt = data.get('json_gpt')  
 
     # Variables
     user_id_int = int(user_id)
@@ -411,6 +412,9 @@ def chatbot():
 
         # Consultar con el chat bot
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+
+
+
         query_vector = embeddings.embed_query(pregunta)
         result = index.query(
             namespace=name_space,
@@ -429,6 +433,9 @@ def chatbot():
         docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
         user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
         user_history_string = ''.join(user_history)
+        
+
+        # return jsonify(docs), 200
 
         # Crear objetos Document de langchain con el texto de los documentos recuperados
         input_documents = (
@@ -439,10 +446,45 @@ def chatbot():
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
         chain = load_qa_chain(llm, chain_type="stuff")
 
+        # Verificar si el mensaje tiene informacion para llenar el json
+        prompt_json_completo = f"""
+        Eres un asistente que completa campos vacíos en un JSON con base en un mensaje del usuario.
+
+        Reglas:
+        - Solo debes completar los campos vacíos.
+        - No modifiques los campos que ya tienen valores.
+        - No inventes información.
+        - Si no encuentras datos en el mensaje, deja los campos tal como están.
+        - Tu respuesta debe ser solo el JSON, sin texto adicional, sin comentarios, sin formato Markdown, sin usar ```.
+
+        Mensaje del usuario:
+        "{pregunta}"
+
+        JSON actual:
+        {json_gpt}
+
+        Devuélveme solo el JSON actualizado en una sola línea, sin ningún texto adicional.
+        """
+
+        # Ejecutar la predicción de GPT
+        json_completado_raw = llm.predict(prompt_json_completo)
+
+        # return jsonify(json_completado_raw), 200
+        
+
+        # Pregunta con json de Datos
+        full_prompt = f"""
+        Este es el json a procesar.
+        {json_completado_raw}
+
+        Pregunta del usuario:
+        {pregunta}
+        """
+
         # Usar el full_prompt como parte del contexto del sistema
         respuesta = chain.run(
             input_documents=input_documents,
-            question=pregunta
+            question=full_prompt
         )
 
         # Historial nuevo de usuario
@@ -494,7 +536,8 @@ def chatbot():
             )
         
         respuestaIA = {
-            "respuesta": respuesta
+            "respuesta": respuesta,
+            "json_gpt": json_completado_raw,
         }
 
         return jsonify(respuestaIA), 200

@@ -58,14 +58,15 @@ client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 def procesar_json_con_pregunta(json_gpt, pregunta, llm):
     if isinstance(json_gpt, dict) and json_gpt:
         prompt_json_completo = f"""
-        Eres un asistente que completa campos vacíos en un JSON con base en un mensaje del usuario.
+        Eres un asistente que completa únicamente campos vacíos en un JSON con base en un mensaje del usuario.
 
-        Reglas:
-        - Solo debes completar los campos vacíos.
-        - No modifiques los campos que ya tienen valores.
-        - No inventes información.
-        - Si no encuentras datos en el mensaje, deja los campos tal como están.
-        - Tu respuesta debe ser solo el JSON, sin texto adicional, sin comentarios, sin formato Markdown, sin usar ```.
+        ⚠️ Reglas estrictas:
+        - No debes modificar campos que ya tienen valor.
+        - No debes agregar nuevos campos que no existan en el JSON original.
+        - No debes inventar información.
+        - Si no encuentras datos válidos en el mensaje para los campos existentes, deja los valores como están.
+        - Tu única salida debe ser el JSON actualizado, en una sola línea, sin ningún comentario o explicación.
+        - No uses formato Markdown ni ` ni ```.
 
         Mensaje del usuario:
         "{pregunta}"
@@ -73,7 +74,7 @@ def procesar_json_con_pregunta(json_gpt, pregunta, llm):
         JSON actual:
         {json_gpt}
 
-        Devuélveme solo el JSON actualizado en una sola línea, sin ningún texto adicional.
+        Devuélveme solo el JSON actualizado, en una sola línea y sin texto adicional.
         """
 
         json_completado_raw = llm.predict(prompt_json_completo)

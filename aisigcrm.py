@@ -470,6 +470,9 @@ def chatbot():
         if isinstance(json_gpt, dict) and json_gpt:
             # Si hay un JSON, construir prompt estructurado
             full_prompt = f"""
+                ### IMPORTANTE:
+                ***Si hay campos vacíos***, pregunta uno a la vez, en orden, y no pases al siguiente hasta que el actual esté respondido.
+
                 JSON actual:
                 {json.dumps(json_gpt, indent=2)}
 
@@ -488,9 +491,12 @@ def chatbot():
                 <Resumen amigable del JSON en formato lista>
 
                 ESTADO:
-                - `"pendiente"`: si aún falta información.
-                - `"esperando confirmación"`: si ya se completó todo y estás preguntando si desea modificar algo.
-                - `"finalizado"`: si el usuario confirma que ya no desea cambiar nada más.
+                <palabra clave aquí: "pendiente", "esperando confirmación" o "finalizado">
+
+                # Estados posibles:
+                # "pendiente" → si aún falta información.
+                # "esperando confirmación" → si ya se completó todo y estás preguntando si desea modificar algo.
+                # "finalizado" → si el usuario confirma que ya no desea cambiar nada más.
             """
         else:
             full_prompt = pregunta  # Si no hay JSON, usar la pregunta directamente
@@ -499,6 +505,11 @@ def chatbot():
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
         chain = load_qa_chain(llm, chain_type="stuff")
         respuesta = chain.run(input_documents=input_documents, question=full_prompt)
+        
+        # FULL PROMPT: Mostrar respuesta cruda
+        print('*****************************************')
+        print(full_prompt)
+        print('*****************************************')
         
         # Debug: Mostrar respuesta cruda
         print('*****************************************')
@@ -514,7 +525,7 @@ def chatbot():
             
             # 7.2. Extraer JSON, respuesta conversacional y estado
             match = re.search(
-                r'JSON:\s*(\{.*?\})\s*RESPUESTA:\s*(.*?)\s*RESUMEN:\s*(.*)',
+                r'JSON:\s*(\{.*?\})\s*RESPUESTA:\s*(.*?)\s*RESUMEN:\s*(.*?)(?=\n+ESTADO:)',
                 respuesta,
                 re.DOTALL
             )
@@ -526,13 +537,13 @@ def chatbot():
                 # Si no había texto inicial, usar el conversacional
                 if not respuesta_texto:
                     respuesta_texto = match.group(2).strip()
-
+            
                 # Si es primera vez agregar resumen
                 if primeraRespuesta:
                     respuesta_texto = f"**Resumen:** {match.group(3).strip()}\n\n{respuesta_texto}"
                 
                 # Extraer estado de la conversación
-                match_estado = re.search(r'ESTADO:\s*-\s*"([^"]+)"', respuesta)
+                match_estado = re.search(r'ESTADO:\s*"?([^"\n]+)"?', respuesta)
                 estado_conversacion = match_estado.group(1).strip() if match_estado else "desconocido"
         else:
             # Cuando no hay JSON involucrado

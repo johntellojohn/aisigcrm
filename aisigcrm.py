@@ -55,43 +55,6 @@ PINECONE_API_KEY_PRUEBAS = os.getenv('PINECONE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-def procesar_json_con_pregunta(json_gpt, pregunta, llm):
-    if isinstance(json_gpt, dict) and json_gpt:
-        prompt_json_completo = f"""
-        Eres un asistente que completa únicamente campos vacíos en un JSON con base en un mensaje del usuario.
-
-        ⚠️ Reglas estrictas:
-        - No debes modificar campos que ya tienen valor.
-        - No debes agregar nuevos campos que no existan en el JSON original.
-        - No debes inventar información.
-        - Si no encuentras datos válidos en el mensaje para los campos existentes, deja los valores como están.
-        - Tu única salida debe ser el JSON actualizado, en una sola línea, sin ningún comentario o explicación.
-        - No uses formato Markdown ni ` ni ```.
-
-        Mensaje del usuario:
-        "{pregunta}"
-
-        JSON actual:
-        {json_gpt}
-
-        Devuélveme solo el JSON actualizado, en una sola línea y sin texto adicional.
-        """
-
-        json_completado_raw = llm.predict(prompt_json_completo)
-
-        full_prompt = f"""
-        Este es el json a procesar.
-        {json_completado_raw}
-
-        Pregunta del usuario:
-        {pregunta}
-        """
-    else:
-        json_completado_raw = False
-        full_prompt = pregunta
-
-    return json_completado_raw, full_prompt
-
 @app.route('/index')
 def index():
     return "Hello, You Human!!"
@@ -427,29 +390,54 @@ def delete_namespace():
 
 @app.route('/api/chatbot', methods=['POST'])
 def chatbot():
-    # Cuerpo
-    data = request.get_json()
-    pregunta = data.get('question')
-    user_id = data.get('user_id') 
-    max_histories = data.get('max_histories', 10)
-    name_space = data.get('name_space', 'real') 
-    json_gpt = data.get('json_gpt')
-
-    # Variables
-    user_id_int = int(user_id)
-
-    if not pregunta or not user_id:
-        return jsonify(response="La pregunta y el ID de usuario son requeridos."), 400
-
+    """
+    Endpoint para manejar las interacciones con el chatbot.
+    Procesa preguntas, mantiene historial de conversación y maneja JSON dinámicos.
+    
+    Parámetros esperados en el JSON de la solicitud:
+    - question: La pregunta del usuario (requerido)
+    - user_id: ID del usuario (requerido)
+    - max_histories: Máximo de interacciones a recordar (opcional, default=10)
+    - name_space: Namespace de Pinecone (opcional, default='real')
+    - json_gpt: JSON dinámico para completar/modificar (opcional)
+    - index: Nombre del índice Pinecone a usar (requerido)
+    
+    Retorna:
+    - respuesta: Texto de respuesta del chatbot
+    - json_gpt: JSON modificado (si se proporcionó uno)
+    - estado_conversacion: Estado actual ('pendiente', 'esperando confirmación', 'finalizado')
+    """
+    
+    # 1. OBTENER Y VALIDAR DATOS DE LA SOLICITUD
     try:
+        data = request.get_json()
+        pregunta = data.get('question')
+        user_id = data.get('user_id') 
+        max_histories = data.get('max_histories', 10)
+        name_space = data.get('name_space', 'real') 
+        json_gpt = data.get('json_gpt')
+        
+        # Validar campos requeridos
+        if not pregunta or not user_id:
+            return jsonify(response="La pregunta y el ID de usuario son requeridos."), 400
+            
+        user_id_int = int(user_id)  # Convertir a entero para consistencia
+    
+    except Exception as e:
+        return jsonify(response=f"Error procesando datos de entrada: {str(e)}"), 400
+    
+    # 2. CONFIGURACIÓN INICIAL Y CONEXIONES
+    try:
+        # Inicializar conexión con Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(data.get('index'))  # Utilizar el índice proporcionado en la solicitud
+        index = pc.Index(data.get('index'))  # Usar índice proporcionado
         index_name = data.get('index')
-
-        # Consultar con el chat bot
+        
+        # Inicializar embeddings de OpenAI
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-
-
+        
+        # 3. BUSCAR CONTEXTO RELEVANTE EN PINECONE
+        # 3.1. Buscar documentos relevantes al namespace principal
         query_vector = embeddings.embed_query(pregunta)
         result = index.query(
             namespace=name_space,
@@ -457,93 +445,151 @@ def chatbot():
             top_k=1,
             include_metadata=True
         )
-
+        docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
+        
+        # 3.2. Buscar historial previo del usuario
         prompt_history = index.query(
             namespace="user_history",
             id=str(user_id),
             top_k=1,
             include_metadata=True
         )
-
-        docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
         user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
         user_history_string = ''.join(user_history)
         
-
-        # Crear objetos Document de langchain con el texto de los documentos recuperados
+        # Verificar si es el primer mensaje del usuario
+        primeraRespuesta = not bool(user_history_string)
+        
+        # 4. PREPARAR LOS DOCUMENTOS PARA EL MODELO
         input_documents = (
-            [Document(text) for text in docs] +  # Pasar el texto directamente
-            [Document(text) for text in user_history]  # Pasar el texto directamente
+            [Document(text) for text in docs] +    # Documentos relevantes
+            [Document(text) for text in user_history]  # Historial de usuario
         )
+        
+        # 5. CONSTRUIR EL PROMPT COMPLETO
+        if isinstance(json_gpt, dict) and json_gpt:
+            # Si hay un JSON, construir prompt estructurado
+            full_prompt = f"""
+                JSON actual:
+                {json.dumps(json_gpt, indent=2)}
 
+                Mensaje del usuario:
+                \"\"\"{pregunta}\"\"\"
+
+                Devuelve tu respuesta en el siguiente formato:
+
+                JSON:
+                <JSON actualizado aquí>
+
+                RESPUESTA:
+                <Respuesta conversacional aquí>
+
+                RESUMEN:
+                <Resumen amigable del JSON en formato lista>
+
+                ESTADO:
+                - `"pendiente"`: si aún falta información.
+                - `"esperando confirmación"`: si ya se completó todo y estás preguntando si desea modificar algo.
+                - `"finalizado"`: si el usuario confirma que ya no desea cambiar nada más.
+            """
+        else:
+            full_prompt = pregunta  # Si no hay JSON, usar la pregunta directamente
+            
+        # 6. EJECUTAR EL MODELO DE LENGUAJE
         llm = ChatOpenAI(model_name='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0)
         chain = load_qa_chain(llm, chain_type="stuff")
-
-        # Procesar el JSON con la pregunta
-        json_completado_raw, full_prompt = procesar_json_con_pregunta(json_gpt, pregunta, llm)
-
-        # Usar el full_prompt como parte del contexto del sistema
-        respuesta = chain.run(
-            input_documents=input_documents,
-            question=full_prompt
-        )
-
-        # Historial nuevo de usuario
+        respuesta = chain.run(input_documents=input_documents, question=full_prompt)
+        
+        # Debug: Mostrar respuesta cruda
+        print('*****************************************')
+        print(respuesta)
+        print('*****************************************')
+        
+        # 7. PROCESAR LA RESPUESTA DEL MODELO
+        if isinstance(json_gpt, dict) and json_gpt:
+            # Extraer componentes de la respuesta estructurada
+            # 7.1. Extraer texto inicial (si existe)
+            match_texto = re.search(r'(.*?)(?=JSON:\s*\{.*?\}\s*RESPUESTA:)', respuesta, re.DOTALL)
+            respuesta_texto = match_texto.group(1).strip() if match_texto else ""
+            
+            # 7.2. Extraer JSON, respuesta conversacional y estado
+            match = re.search(
+                r'JSON:\s*(\{.*?\})\s*RESPUESTA:\s*(.*?)\s*RESUMEN:\s*(.*)',
+                respuesta,
+                re.DOTALL
+            )
+            
+            if match:
+                json_str = match.group(1)
+                json_completado_raw = json.loads(json_str)
+                
+                # Si no había texto inicial, usar el conversacional
+                if not respuesta_texto:
+                    respuesta_texto = match.group(2).strip()
+                
+                # Extraer estado de la conversación
+                match_estado = re.search(r'ESTADO:\s*-\s*"([^"]+)"', respuesta)
+                estado_conversacion = match_estado.group(1).strip() if match_estado else "desconocido"
+        else:
+            # Cuando no hay JSON involucrado
+            json_completado_raw = False
+            respuesta_texto = respuesta
+            estado_conversacion = False
+            
+        # 8. ACTUALIZAR HISTORIAL DE CONVERSACIÓN
+        # 8.1. Construir nuevo historial
         userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
         count = userHistory.count("- Respuesta:")
-
-        # Eliminación de data
-        if count==max_histories:
+        
+        # 8.2. Limitar historial según max_histories
+        if count == max_histories:
             patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
-            userHistory_delete = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
-            print(f"CADENA ELIMINADA: {userHistory_delete}")
-            userHistory = userHistory_delete
-
-
-        # Buscar el vector con el ID "Prompt"
+            userHistory = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
+        
+        # 8.3. Actualizar vector en Pinecone
         instructions_values = embeddings.embed_query(userHistory)
         existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
         current_datetime = datetime.now().isoformat()
-
+        
         if user_id not in existing_new_vector['vectors']:
+            # Crear nuevo vector de historial
             index.upsert(
-                vectors=[
-                    {
-                        "id": user_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": "Historial de conversacion:\n" + userHistory,
-                            "date": current_datetime
-                        }
+                vectors=[{
+                    "id": user_id,
+                    "values": instructions_values,
+                    "metadata": {
+                        "text": "Historial de conversacion:\n" + userHistory,
+                        "date": current_datetime
                     }
-                ],
+                }],
                 namespace="user_history"
             )
-
         else:
+            # Actualizar vector existente
             index.delete(ids=user_id, namespace="user_history")
             index.upsert(
-                vectors=[
-                    {
-                        "id": user_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": userHistory,
-                            "date": current_datetime
-                        }
+                vectors=[{
+                    "id": user_id,
+                    "values": instructions_values,
+                    "metadata": {
+                        "text": userHistory,
+                        "date": current_datetime
                     }
-                ],
+                }],
                 namespace="user_history"
             )
         
+        # 9. CONSTRUIR RESPUESTA FINAL
         respuestaIA = {
-            "respuesta": respuesta,
+            "respuesta": respuesta_texto,
             "json_gpt": json_completado_raw,
+            "estado_conversacion": estado_conversacion,
         }
-
+        
         return jsonify(respuestaIA), 200
     
     except Exception as e:
+        # Manejo detallado de errores
         exc_type, exc_obj, tb = sys.exc_info()
         line_number = tb.tb_lineno
         filename = tb.tb_frame.f_code.co_filename
@@ -553,7 +599,7 @@ def chatbot():
             "linea": line_number,
             "tipo": str(exc_type.__name__)
         }), 500
-
+    
 @app.route('/api/deleteHistory', methods=['DELETE'])
 def delete_history():
     try:

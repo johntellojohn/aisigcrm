@@ -537,10 +537,12 @@ def chatbot():
                 # Si no había texto inicial, usar el conversacional
                 if not respuesta_texto:
                     respuesta_texto = match.group(2).strip()
+                else:
+                    respuesta_texto = f"{respuesta_texto}\n\n{match.group(2).strip()}"
             
                 # Si es primera vez agregar resumen
                 if primeraRespuesta:
-                    respuesta_texto = f"**Resumen:** {match.group(3).strip()}\n\n{respuesta_texto}"
+                    respuesta_texto = f"**Resumen:**\n\n {match.group(3).strip()}\n\n{respuesta_texto}"
                 
                 # Extraer estado de la conversación
                 match_estado = re.search(r'ESTADO:\s*"?([^"\n]+)"?', respuesta)

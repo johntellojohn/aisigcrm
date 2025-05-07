@@ -752,6 +752,30 @@ def upsert_file():
         ), 500
 
 
+@app.route('/api/deleteFile', methods=['DELETE'])
+def delete_file():
+    try:
+        data = request.get_json()
+        
+        # Validar los datos de entrada
+        if not data or 'index' not in data or 'file_id' not in data or 'namespace' not in data:
+            return jsonify(response="Datos de entrada inválidos. Se requiere index, file_id y namespace."), 400
+
+        # Configurar Pinecone
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+        index = pc.Index(data.get('index'))
+
+        # Eliminar el archivo específico dentro del namespace
+        index.delete(ids=[data.get('file_id')], namespace=data.get('namespace'))
+
+        return jsonify(response=f"Archivo {data.get('file_id')} eliminado correctamente en namespace {data.get('namespace')}.", status_code=200), 200
+
+    except openai.error.AuthenticationError:
+        return jsonify(response="La API key no es válida.", status_code=401), 401
+
+    except Exception as e:
+        return jsonify(response=f"Ocurrió un error: {str(e)}", status_code=500), 500
+
 def extract_text(content, file_type):
     """ Extrae el texto del archivo según su tipo. """
     text = ""

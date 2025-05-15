@@ -26,9 +26,14 @@ from langchain_openai import ChatOpenAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.schema import Document
 from dotenv import load_dotenv
+# Importaciones necesarias para el manejo de imágenes y OCR.
 from PyPDF2 import PdfReader
-from io import BytesIO
-
+from io import BytesIO # permite tratar bytes como si fueran un archivo.
+import pytesseract # librería que interactúa con el motor Tesseract OCR.
+from PIL import Image # para abrir y manipular datos de imágenes
+import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
+import base64 # Para codificar imágenes y enviarlas a la API de OpenAI
+from langchain.text_splitter import CharacterTextSplitter 
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -64,7 +69,7 @@ def get_data():
 
     include_values = request.args.get('include_values', False)
     top_k = request.args.get('top_k', 3)
-    index = request.args.get('index', "chatbot")
+    index = request.args.get('index', "chatbotprueba")
     name_space = request.args.get('name_space', "real")
 
     '''
@@ -438,11 +443,13 @@ def chatbot():
         
         # 3. BUSCAR CONTEXTO RELEVANTE EN PINECONE
         # 3.1. Buscar documentos relevantes al namespace principal
+        # Se aumentó top_k de 1 a 5 en la consulta a Pinecone para mejorar la robustez del sistema, 
+        # permitiendo recuperar múltiples resultados semánticamente relevantes y aumentar la probabilidad de respuestas precisas.
         query_vector = embeddings.embed_query(pregunta)
         result = index.query(
             namespace=name_space,
             vector=query_vector,
-            top_k=1,
+            top_k=5,
             include_metadata=True
         )
         docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
@@ -451,7 +458,7 @@ def chatbot():
         prompt_history = index.query(
             namespace="user_history",
             id=str(user_id),
-            top_k=1,
+            top_k=5,
             include_metadata=True
         )
         user_history = [match['metadata']['text'] for match in prompt_history['matches'] if 'metadata' in match]
@@ -477,9 +484,14 @@ def chatbot():
         
         # 4. PREPARAR LOS DOCUMENTOS PARA EL MODELO
         input_documents = (
+<<<<<<< Updated upstream
             [Document(text) for text in docs] +    # Documentos relevantes
             [Document(text) for text in user_history] +  # Historial de usuario
             [Document(text) for text in base_conocimientos]  # Base de conocimiento general basada en archivos cargados
+=======
+            [Document(page_content=text) for text in docs] +    # Documentos relevantes
+            [Document(page_content=text) for text in user_history]  # Historial de usuario
+>>>>>>> Stashed changes
         )
         
         # 5. CONSTRUIR EL PROMPT COMPLETO
@@ -659,6 +671,7 @@ def upsert_file():
     name_space = data.get('name_space')  # Usamos un solo namespace 'file'
     index_name = data.get('index')
 
+<<<<<<< Updated upstream
     if not index_name or not file_url_id or not file_url or not name_space or not type_file:
         return jsonify(
             {
@@ -667,11 +680,18 @@ def upsert_file():
                 "data": None
             }
         ), 400
+=======
+    if not index_name or not id_vector or not file_url or not name_space or not type_file:
+        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
+    if not file_url_id:
+         return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
+>>>>>>> Stashed changes
 
     try:
-        # Descargar el archivo desde la URL
+        print(f"Descargando archivo desde: {file_url}", flush=True)
         response = requests.get(file_url)
         response.raise_for_status()
+<<<<<<< Updated upstream
 
         # Extraer el contenido según el tipo de archivo
         text = extract_text(response.content, type_file)
@@ -686,8 +706,102 @@ def upsert_file():
             ), 400
 
         # Conexión a Pinecone
-        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+=======
+        file_bytes = response.content 
+        
+        text = "" 
 
+        if type_file == "pdf":
+            print("Procesando archivo PDF.", flush=True)
+            pdf_doc_for_check = fitz.open(stream=file_bytes, filetype="pdf")
+            has_images = False
+            if len(pdf_doc_for_check) > 0:
+                for page_num_check in range(min(len(pdf_doc_for_check), 5)):
+                    if pdf_doc_for_check.load_page(page_num_check).get_images(full=True):
+                        has_images = True
+                        break
+            
+            if not has_images:
+                print("PDF sin imágenes detectadas", flush=True)
+                pdf_file_obj_for_reader = BytesIO(file_bytes)
+                reader = PdfReader(pdf_file_obj_for_reader)
+                temp_text_list_pypdf = []
+                for page_obj in reader.pages:
+                    extracted_page_content = page_obj.extract_text()
+                    if extracted_page_content:
+                        temp_text_list_pypdf.append(extracted_page_content)
+                text = "\n".join(temp_text_list_pypdf)
+                pdf_doc_for_check.close()
+            else:
+                print("PDF con imágenes detectadas", flush=True)
+                all_extracted_content_parts_pdf = []
+                for page_num in range(len(pdf_doc_for_check)):
+                    current_fitz_page_obj = pdf_doc_for_check.load_page(page_num)
+                    display_page_number = page_num + 1
+                    text_from_fitz_page_content = current_fitz_page_obj.get_text("text")
+                    if text_from_fitz_page_content.strip():
+                        all_extracted_content_parts_pdf.append(f"Texto de Página {display_page_number}:\n{text_from_fitz_page_content.strip()}")
+
+                    images_on_current_page = current_fitz_page_obj.get_images(full=True)
+                    for img_idx, img_info_data_fitz in enumerate(images_on_current_page):
+                        display_img_index_num = img_idx + 1
+                        img_xref_from_data = img_info_data_fitz[0]
+                        try:
+                            base_image_from_pdf = pdf_doc_for_check.extract_image(img_xref_from_data)
+                            image_bytes_for_processing_now = base_image_from_pdf["image"]
+                            print(f"Procesando Imagen {display_img_index_num} de la Página {display_page_number}...", flush=True)
+                            ai_description_from_openai = get_image_description_openai(image_bytes_for_processing_now, max_tokens=70)
+                            ocr_text_from_image_tess = extract_text_from_image_tesseract(image_bytes_for_processing_now)
+                            image_summary_text_block = (
+                                f"Resumen de Contenido de Imagen {display_img_index_num} (ubicada en la Página {display_page_number}):\n"
+                                f"Descripción Visual: {ai_description_from_openai}\n"
+                                f"Texto Extraído de Imagen: {ocr_text_from_image_tess if ocr_text_from_image_tess and 'Error en OCR' not in ocr_text_from_image_tess else 'No se extrajo texto o hubo un error.'}"
+                            )
+                            all_extracted_content_parts_pdf.append(image_summary_text_block)
+                        except Exception as e_img_processing_detail_err:
+                            print(f"Error procesando imagen XREF {img_xref_from_data} en la página {display_page_number}: {e_img_processing_detail_err}", flush=True)
+                            all_extracted_content_parts_pdf.append(f"Error al procesar información de Imagen {display_img_index_num} en la Página {display_page_number}.")
+                pdf_doc_for_check.close()
+                text = "\n\n---\n\n".join(all_extracted_content_parts_pdf)
+        
+        elif type_file == "docx":
+            file_stream = BytesIO(file_bytes) 
+            result = mammoth.extract_raw_text(file_stream)
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOCX"
+        elif type_file == "doc":
+            file_stream = BytesIO(file_bytes)
+            result = mammoth.extract_raw_text(file_stream)
+            if result.value is not None:
+                text += result.value
+            else:
+                text += "No se pudo extraer texto del documento DOC"
+        elif type_file == "txt":
+            text = file_bytes.decode('utf-8', errors='ignore') # Decodificar de txt a bytes directamente
+        elif type_file in ["xls", "xlsx"]:
+            excel_file = BytesIO(file_bytes)
+            if type_file == "xls":
+                df = pd.read_excel(excel_file, engine='xlrd')
+            else:
+                df = pd.read_excel(excel_file, engine='openpyxl')
+            text = df.to_string(index=False)
+        else:
+            return jsonify(response="Tipo de archivo no soportado. Use pdf, docx, txt, xls o xlsx."), 400
+
+        if not text or not text.strip():
+            return jsonify(response="No se pudo extraer texto del archivo."), 400
+        
+        # --- Lógica de Pinecone con adaptación para chunking ---
+>>>>>>> Stashed changes
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+        index_list_resp_pinecone = pc.list_indexes()
+        current_pinecone_indices_names = [idx.name for idx in index_list_resp_pinecone.indexes]
+        if index_name not in current_pinecone_indices_names:
+            pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+
+<<<<<<< Updated upstream
         # Verificar si el índice existe, si no, crearlo
         if index_name not in pc.list_indexes().names():
             pc.create_index(
@@ -750,6 +864,157 @@ def upsert_file():
                 "data": None
             }
         ), 500
+=======
+        # 2. OBTENCIÓN DE INSTANCIA DEL ÍNDICE
+        index_pinecone_instance = pc.Index(index_name) 
+        embeddings_openai_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY) 
+
+        # 3. PREPARACIÓN DEL CONTENIDO COMPLETO
+        #    'values_intructions_full_content' es tu 'values_intructions' original.
+        values_intructions_full_content = f"""
+            Contenido del archivo ({type_file}):
+            {text} 
+        """
+        #    'text' aquí es el 'processed_text_for_pinecone' que ya incluye texto y resúmenes de imágenes si el archivo era un PDF con imágenes.
+
+        # 4. DEFINICIONES PARA CHUNKING Y METADATOS
+        MAX_METADATA_BYTES_FOR_PINECONE = 39000 # Límite práctico para el campo 'text' en metadatos de Pinecone.
+        vectors_for_pinecone_upsert = [] # Lista para acumular los vectores a subir.
+        base_pinecone_vector_id = "file" + str(file_url_id) # es 'instructions_id' original. Se usará como base para IDs de chunks.
+
+        # 5. ESTRATEGIA DE ACTUALIZACIÓN 
+        #    OBJETIVO: Cuando se actualiza un archivo (mismo 'file_url_id'), queremos reemplazar su contenido anterior en Pinecone.
+        #    PROBLEMA:
+        #        - Si antes el archivo se guardó como 1 solo vector y ahora se va a guardar como chunks.
+        #        - Si antes se guardó como N chunks y ahora se va a guardar como M chunks (o como 1 solo vector).
+        #    SOLUCIÓN INTRODUCIDA:
+        #        - Se intenta borrar el vector que tendría el ID base ('file' + file_url_id). Esto cubre el caso
+        #          donde el archivo se guardó previamente como un solo vector y ahora se quiere actualizar (ya sea
+        #          como un solo vector de nuevo o como chunks).
+        #        - SI EL ARCHIVO SE GUARDÓ ANTES COMO CHUNKS: Esta simple lógica de borrado NO eliminará
+        #          esos chunks antiguos (que tendrían IDs como 'file..._chunk_0', 'file..._chunk_1', etc.).
+        #          Eliminar chunks antiguos de forma selectiva es más complejo y requeriría:
+        #            a) Almacenar los IDs de todos los chunks asociados a un 'file_url_id' en algún lado, o
+        #            b) Usar la funcionalidad de 'delete by metadata filter' de Pinecone si los chunks tienen un metadato común
+        #               como 'file_url_id_param' (que se añadió en el nuevo código).
+        #               Ejemplo: index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
+        #            c) O borrar por prefijo de ID si la API de Pinecone lo permitiera directamente (no es común).
+        try:
+            print(f"Intentando borrar datos antiguos para file_url_id '{file_url_id}' (ID base: {base_pinecone_vector_id}) en namespace '{name_space}'.", flush=True)
+            index_pinecone_instance.delete(ids=[base_pinecone_vector_id], namespace=name_space)
+            index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
+            # Para una limpieza más completa de chunks si 'file_url_id_param' se usa consistentemente en metadatos:
+            # index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
+            # Esto borraría TODOS los vectores (chunks o no) que tengan ese file_url_id_param.
+            print(f"Intento de borrado de datos antiguos para '{file_url_id}' completado en namespace '{name_space}'.", flush=True)
+        except Exception as e_delete_old:
+            error_message_lower = str(e_delete_old).lower()
+            if "namespace not found" in error_message_lower or "namespace does not exist" in error_message_lower:
+                print(f"Advertencia al intentar borrar datos antiguos: Namespace '{name_space}' probablemente aún no existe o no contenía datos para '{file_url_id}'. Error: {e_delete_old}", flush=True)
+            else:
+                print(f"Error inesperado durante el borrado preventivo de datos antiguos: {e_delete_old}", flush=True)
+
+
+        # 6. LÓGICA DE CHUNKING
+        #    OBJETIVO: Pinecone tiene un límite en el tamaño de los metadatos (especialmente el campo 'text' y por exceder límites de metadatos.).
+        #              Si el contenido extraído del archivo es muy grande, no cabrá en un solo vector.
+        #        - El código original asumía que 'values_intructions' siempre cabría. No había chunking.
+        #        - El nuevo código verifica el tamaño en bytes del contenido.
+        if len(values_intructions_full_content.encode('utf-8')) <= MAX_METADATA_BYTES_FOR_PINECONE:
+            # CASO 1: EL CONTENIDO ES PEQUEÑO Y CABE EN UN SOLO VECTOR 
+            #    - Se crea un solo vector con 'base_pinecone_vector_id'.
+            #    - Los metadatos incluyen información para indicar que no es un chunk.
+            print(f"Contenido cabe en un solo vector. ID: {base_pinecone_vector_id}", flush=True)
+            embedding_for_single_vector = embeddings_openai_model.embed_query(values_intructions_full_content)
+            vectors_for_pinecone_upsert.append({
+                "id": base_pinecone_vector_id,
+                "values": embedding_for_single_vector,
+                "metadata": { 
+                    "text": values_intructions_full_content,
+                    "original_file_type": type_file,
+                    "source_url": file_url,
+                    "file_url_id_param": str(file_url_id), # Para filtrado/agrupación
+                    "is_chunked": False, # Indica que este no es parte de un conjunto de chunks
+                    "chunk_index": 0,    # Índice del chunk (0 para el único chunk)
+                    "total_chunks": 1    # Número total de chunks (1 en este caso)
+                }
+            })
+        else:
+            # CASO 2: EL CONTENIDO ES DEMASIADO GRANDE, NECESITA CHUNKING
+            #    - Se usa CharacterTextSplitter de Langchain para dividir el texto.
+            #    - CADA CHUNK SE CONVIERTE EN UN VECTOR SEPARADO EN PINECONE.
+            #    - Cada chunk tendrá un ID único: base_id + "_chunk_" + índice_del_chunk.
+            #    - Los metadatos de cada chunk incluyen información sobre su origen y su posición en la secuencia.
+            print(f"Contenido excede límite ({MAX_METADATA_BYTES_FOR_PINECONE} bytes). Dividiendo en chunks para ID base: {base_pinecone_vector_id}", flush=True)
+            text_splitter_for_chunks = CharacterTextSplitter(
+                separator="\n\n---\n\n", # Un separador que podrías usar en tu `processed_text_for_pinecone`
+                chunk_size=15000,       # Tamaño del chunk en CARACTERES. Es una heurística para no exceder los bytes.
+                                        # Ajusta este valor según tus pruebas.
+                chunk_overlap=200,      # Superposición entre chunks para mantener contexto.
+                length_function=len
+            )
+            
+            text_chunks_from_splitter = text_splitter_for_chunks.split_text(values_intructions_full_content)
+            print(f"Generados {len(text_chunks_from_splitter)} chunks.", flush=True)
+
+            for i, single_chunk_text in enumerate(text_chunks_from_splitter):
+                chunk_pinecone_id = f"{base_pinecone_vector_id}_chunk_{i}" # ID único para el chunk
+                
+                # Salvaguarda: truncar el texto del chunk si excede el límite de metadatos de Pinecone
+                # Esto es para el campo 'text' de los metadatos, no para el texto que se embedde.
+                # El texto original del chunk se usa para el embedding.
+                final_text_for_chunk_metadata = single_chunk_text
+                if len(single_chunk_text.encode('utf-8')) > MAX_METADATA_BYTES_FOR_PINECONE:
+                    print(f"Chunk {i} todavía es demasiado grande ({len(single_chunk_text.encode('utf-8'))} bytes) para metadatos después de dividir. Será truncado para metadatos.", flush=True)
+                    # Lógica de truncado cuidadoso para no cortar en medio de un carácter multibyte UTF-8
+                    encoded_single_chunk = single_chunk_text.encode('utf-8')
+                    truncated_bytes_of_chunk = encoded_single_chunk[:MAX_METADATA_BYTES_FOR_PINECONE]
+                    temp_truncated_chunk_text = ""
+                    # Intenta decodificar desde el final para encontrar un punto válido
+                    for k_idx_chunk in range(len(truncated_bytes_of_chunk), 0, -1):
+                        try:
+                            temp_truncated_chunk_text = truncated_bytes_of_chunk[:k_idx_chunk].decode('utf-8')
+                            break
+                        except UnicodeDecodeError: 
+                            continue # Sigue intentando con un byte menos
+                    final_text_for_chunk_metadata = (temp_truncated_chunk_text + "\n... (Chunk truncado para metadatos)") if temp_truncated_chunk_text else "Chunk truncado por tamaño para metadatos."
+
+                embedding_for_chunk = embeddings_openai_model.embed_query(single_chunk_text) # Embeber el chunk original completo.
+                vectors_for_pinecone_upsert.append({
+                    "id": chunk_pinecone_id,
+                    "values": embedding_for_chunk,
+                    "metadata": {
+                        "text": final_text_for_chunk_metadata, # Texto del chunk (potencialmente truncado para metadatos)
+                        "original_file_type": type_file,
+                        "source_url": file_url,
+                        "file_url_id_param": str(file_url_id), # ID base para agrupar chunks
+                        "is_chunked": True,                    # Indica que es parte de un conjunto de chunks
+                        "chunk_index": i,                      # Índice de este chunk
+                        "total_chunks": len(text_chunks_from_splitter) # Número total de chunks para este archivo
+                    }
+                })
+
+        # 7. UPSERT DE VECTORES A PINECONE (MODIFICADO PARA MANEJAR UNO O VARIOS VECTORES)
+        #    - El código original siempre subía un solo vector.
+        #    - El nuevo código sube la lista 'vectors_for_pinecone_upsert', que puede contener
+        #      un solo vector (si el contenido era pequeño) o múltiples vectores (si se hizo chunking).
+        if vectors_for_pinecone_upsert:
+            if len(vectors_for_pinecone_upsert) > 100:
+                    print(f"ADVERTENCIA - Intentando subir {len(vectors_for_pinecone_upsert)} vectores. Pinecone recomienda lotes de <=100. Implementar batching si esto es común.", flush=True)
+            
+            index_pinecone_instance.upsert(vectors=vectors_for_pinecone_upsert, namespace=name_space)
+            print(f"{len(vectors_for_pinecone_upsert)} vector(es) subido(s) a Pinecone.", flush=True)
+        else:
+            print("No se generaron vectores para subir (esto no debería ocurrir si 'text' tiene contenido).", flush=True)
+        return jsonify(response=f"Información ingresada con éxito. Se crearon {len(vectors_for_pinecone_upsert)} vector(es)."), 200
+
+    except Exception as e:
+        print(f"---- DETAILED ERROR  ----", flush=True)
+        print(f"Exception Type: {type(e).__name__}", flush=True)
+        print(f"Exception Args: {e.args}", flush=True)
+        print(f"Full Traceback within upsertFile:\n{traceback.format_exc()}", flush=True)
+        return jsonify(error=f"Error: {str(e)}", traceback=traceback.format_exc()), 500
+>>>>>>> Stashed changes
 
 
 @app.route('/api/deleteFile', methods=['DELETE'])
@@ -801,6 +1066,263 @@ def extract_text(content, file_type):
 
     return text
 
+def extract_text_from_image_tesseract(image_bytes):
+    """Función  para extraer texto (en español e inglés) de una imagen usando Tesseract OCR. Toma los bytes de una imagen, intenta leer el texto y lo devuelve."""
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        text = pytesseract.image_to_string(img, lang='spa+eng')
+        if not text.strip():
+            return "No se detectó texto en la imagen con Tesseract."
+        return text
+    except pytesseract.TesseractNotFoundError: # Error específico si Tesseract no se encuentra.
+        print("Error: Tesseract no está instalado o no se encuentra en el PATH.", flush=True)
+        print("Por favor, instale Tesseract OCR y asegúrese de que esté en el PATH del sistema.", flush=True)
+        print("O configure pytesseract.pytesseract.tesseract_cmd con la ruta al ejecutable.", flush=True)
+        return "Error en OCR: Tesseract no encontrado. Verifique la instalación."
+    except Exception as e: # Captura cualquier otro error durante el OCR.
+        print(f"Error durante OCR con Tesseract: {e}", flush=True)
+        return f"Error en OCR (Tesseract): {str(e)}"
+    
+def get_image_description_openai(image_bytes, max_tokens=150):
+    """Función para obtener una descripción de una imagen usando la API GPT-4o (Vision) de OpenAI.
+    Toma los bytes de una imagen, los envía a OpenAI y devuelve la descripción generada."""
+    global client # Usa el cliente de OpenAI inicializado globalmente
+    if not client:
+        print("OpenAI client not initialized. Skipping image description.", flush=True)
+        return "Descripción de imagen no disponible (cliente OpenAI no inicializado)."
+
+    try:
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"
+        }
+        
+        payload = {
+            "model": "gpt-4o", 
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe esta imagen en detalle EN ESPAÑOL. ¿Cuáles son los elementos clave? Si es un diagrama o gráfico, explica su propósito. Si es un objeto, describe su apariencia y función, si es evidente."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}" 
+                            }
+                        }
+                    ]
+                }
+            ],
+            "max_tokens": max_tokens
+        }
+        
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=payload["messages"],
+            max_tokens=max_tokens
+        )
+        description = response.choices[0].message.content.strip()
+        return description
+
+    except openai.APIError as e: 
+        print(f"OpenAI API error while getting image description: {e}", flush=True)
+        return f"Error de API OpenAI al describir imagen: {str(e)}"
+    except Exception as e:
+        print(f"Unexpected error getting image description: {e}", flush=True)
+        return f"Error inesperado al describir imagen: {str(e)}"
+    
+@app.route('/api/uploadPdfChat', methods=['POST'])
+def upload_pdf_chat():
+    data = request.get_json()
+    file_url = data.get('file_url')
+    index_name = data.get('index_name')
+    pdf_id = data.get('pdf_id')
+
+    if not all([file_url, index_name, pdf_id]):
+        return jsonify(response="Información requerida: file_url, index_name, pdf_id."), 400
+
+    try:
+        # 1: Descarga el PDF desde la URL proporcionada
+        print(f"Descargando PDF desde: {file_url}", flush=True)
+        response = requests.get(file_url)
+        response.raise_for_status()
+        pdf_bytes = response.content
+        print("PDF descargado.", flush=True)
+
+        # 2: Verifica que el índice de Pinecone especificado exista
+        index_list_response = pc.list_indexes()
+        current_index_names = [index_model.name for index_model in index_list_response.indexes]
+
+        if index_name not in current_index_names:
+            print(f"Error: El índice de Pinecone '{index_name}' no existe.", flush=True)
+            return jsonify(error=f"El índice de Pinecone '{index_name}' no existe."), 404
+
+        index_instance = pc.Index(index_name)
+        print(f"Usando índice de Pinecone existente: {index_name}", flush=True)
+
+        embeddings_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+
+        vectors_to_upsert = []
+        
+        # 3: Procesar el PDF página por página
+        print("Procesando PDF con PyMuPDF...", flush=True)
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            page_content_parts_for_pinecone = [] 
+            page_number_for_display = page_num + 1
+
+            # 3.1: Extraer y procesar el texto de la página
+            page_text_content = page.get_text("text")
+            if page_text_content.strip():
+                page_text_header = f"Contenido de texto de la Página {page_number_for_display} del PDF '{pdf_id}':\n"
+                full_page_text_for_chunking = page_text_header + page_text_content.strip()
+                
+                text_chunks = text_splitter.split_text(full_page_text_for_chunking)
+                for chunk_idx, chunk in enumerate(text_chunks):
+                    vector_id = f"{pdf_id}_page_{page_number_for_display}_textchunk_{chunk_idx}"
+                    vector_embedding = embeddings_model.embed_query(chunk)
+                    metadata = {
+                        "text": chunk, 
+                        "pdf_id": pdf_id,
+                        "page_number": page_number_for_display,
+                        "source_type": "pdf_page_text"
+                    }
+                    vectors_to_upsert.append({
+                        "id": vector_id,
+                        "values": vector_embedding,
+                        "metadata": metadata
+                    })
+
+            # 3.2: Extraer y procesar las imágenes de la página
+            image_list = page.get_images(full=True)
+            if image_list:
+                print(f"Página {page_number_for_display}: Encontradas {len(image_list)} imágenes.", flush=True)
+            
+            for img_idx, img_info in enumerate(image_list):
+                image_index_on_page_for_display = img_idx + 1
+                xref = img_info[0]
+                try:
+                    base_image = pdf_document.extract_image(xref)
+                    image_bytes_data = base_image["image"]
+
+                    print(f"  Procesando Imagen {image_index_on_page_for_display} en Página {page_number_for_display} (XREF: {xref})...", flush=True)
+
+                    #  Obtener descripción de la imagen generada por IA
+                    print(f"    Obteniendo descripción AI para Imagen {image_index_on_page_for_display}...", flush=True)
+                    ai_description = get_image_description_openai(image_bytes_data)
+                    print(f"    Descripción AI: {ai_description[:100]}...", flush=True)
+
+                    # Obtener texto de la imagen usando OCR
+                    print(f"    Obteniendo texto OCR para Imagen {image_index_on_page_for_display}...", flush=True)
+                    ocr_text = extract_text_from_image_tesseract(image_bytes_data) 
+                    print(f"    Texto OCR: {ocr_text[:100].replace(chr(10), ' ')}...", flush=True)
+                    
+                    # Intentar obtener la posición de la imagen en la página con bounding box
+                    img_rect = None
+                    try:
+                        for item in page.get_drawings(): 
+                            if item["type"] == "image" and item.get("xref") == xref:
+                                img_rect = item["rect"]
+                                break
+                        if not img_rect: 
+                           rects = page.get_image_bbox(img_info, transform=True)
+                           if rects: img_rect = rects
+
+                    except Exception as e_bbox:
+                        print(f"Advertencia: No se pudo obtener el bounding box para la imagen {xref} en página {page_number_for_display}: {e_bbox}", flush=True)
+                        img_rect = "No disponible"
+
+
+                    # Construir un texto combinado para esta imagen, incluyendo su referencia, la descripción AI, el texto OCR y su posición
+                    image_combined_text = (
+                        f"Detalles de referencia para la Imagen: {image_index_on_page_for_display} ubicada en la Página {page_number_for_display} del documento '{pdf_id}'.\n"
+                        f"Descripción visual: {ai_description}\n"
+                        f"Texto contenido dentro de la imagen (OCR): {ocr_text if ocr_text and 'Error en OCR' not in ocr_text else 'No se extrajo texto o hubo un error.'}"
+                        f"Posición en página (bbox): {list(img_rect) if isinstance(img_rect, fitz.Rect) else img_rect}\n"
+                    )
+                    
+                    # 3.2 Vectorizar el texto combinado de la imagen y preparar para Pinecone
+                    image_vector_id = f"{pdf_id}_page_{page_number_for_display}_img_{image_index_on_page_for_display}"
+                    image_vector_embedding = embeddings_model.embed_query(image_combined_text)
+                    image_metadata = {
+                        "text": image_combined_text,
+                        "pdf_id": pdf_id,
+                        "page_number": page_number_for_display,
+                        "image_index_on_page": image_index_on_page_for_display,
+                        "bounding_box": [round(c, 2) for c in img_rect] if isinstance(img_rect, fitz.Rect) else str(img_rect),
+                        "ai_description_raw": ai_description,
+                        "ocr_text_raw": ocr_text,
+                        "source_type": "image_content"
+                    }
+                    vectors_to_upsert.append({
+                        "id": image_vector_id,
+                        "values": image_vector_embedding,
+                        "metadata": image_metadata
+                    })
+                except Exception as e_img_proc:
+                    print(f"Error procesando una imagen (XREF: {xref}) en la página {page_number_for_display}: {e_img_proc}", flush=True)
+
+        pdf_document.close()
+        total_vectors = len(vectors_to_upsert)
+        print(f"Total de {total_vectors} vectores generados para el PDF {pdf_id}.", flush=True)
+
+        # 4: Subir los vectores generados a Pinecone en lotes
+        if vectors_to_upsert:
+            batch_size = 100
+            for i in range(0, total_vectors, batch_size):
+                batch = vectors_to_upsert[i:i + batch_size]
+                print(f"Subiendo batch {i // batch_size + 1} de { (total_vectors + batch_size -1) // batch_size } a Pinecone (namespace: {pdf_id})...", flush=True)
+                index_instance.upsert(vectors=batch, namespace=pdf_id)
+            print("Todos los vectores subidos a Pinecone.", flush=True)
+            response_data = {
+                "status": "OK",
+                "message": f"El PDF con ID '{pdf_id}' ha sido procesado y su contenido está listo para consulta en el índice '{index_name}' (namespace: '{pdf_id}').",
+                "document_id_for_query": pdf_id, 
+                "pinecone_index_used": index_name,
+                "pinecone_namespace_for_document": pdf_id,
+                "total_vectors_created": total_vectors
+            }
+            print(f"Response data: {json.dumps(response_data, indent=2)}", flush=True)
+            return jsonify(response_data), 200
+        else:
+            print(f"No se generaron vectores para el PDF {pdf_id} en el índice '{index_name}'.", flush=True)
+            response_data = {
+                "status": "OK_NO_CONTENT", 
+                "message": f"El PDF con ID '{pdf_id}' fue procesado, pero no se extrajo contenido para vectorizar o no se generaron vectores. Está técnicamente 'listo', pero puede que no haya contenido para consultar en el índice '{index_name}' (namespace: '{pdf_id}').",
+                "document_id_for_query": pdf_id,
+                "pinecone_index_used": index_name,
+                "pinecone_namespace_for_document": pdf_id,
+                "total_vectors_created": 0
+            }
+            return jsonify(response_data), 200
+
+    # Manejo de errores
+    except requests.exceptions.RequestException as e_req:
+        print(f"Error descargando PDF: {traceback.format_exc()}", flush=True)
+        return jsonify(error=f"Error descargando el PDF: {str(e_req)}", traceback=traceback.format_exc()), 500
+    except RuntimeError as e_runtime:
+        error_str = str(e_runtime).lower()
+        if "mupdf" in error_str or "fitz" in error_str or "cannot open" in error_str or "format error" in error_str:
+            print(f"PyMuPDF RuntimeError in uploadPdfChat: {traceback.format_exc()}", flush=True)
+            return jsonify(error=f"Error procesando el PDF con PyMuPDF: {str(e_runtime)}", traceback=traceback.format_exc()), 500
+        else:
+            print(f"Unhandled RuntimeError in uploadPdfChat: {traceback.format_exc()}", flush=True)
+            return jsonify(error=f"Error inesperado (RuntimeError): {str(e_runtime)}", traceback=traceback.format_exc()), 500
+    except openai.APIError as e_openai: 
+        print(f"OpenAI API Error in uploadPdfChat: {traceback.format_exc()}", flush=True)
+        return jsonify(error=f"Error de API OpenAI: {str(e_openai)}", traceback=traceback.format_exc()), 500
+    except Exception as e:
+        print(f"General Exception in uploadPdfChat: {traceback.format_exc()}", flush=True)
+        return jsonify(error=f"Error inesperado: {str(e)}", traceback=traceback.format_exc()), 500
 
 ###############
 # ip and port #

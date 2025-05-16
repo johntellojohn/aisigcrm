@@ -31,7 +31,7 @@ from PyPDF2 import PdfReader
 from io import BytesIO # permite tratar bytes como si fueran un archivo.
 import pytesseract # librería que interactúa con el motor Tesseract OCR.
 from PIL import Image # para abrir y manipular datos de imágenes
-import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
+#import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
 import base64 # Para codificar imágenes y enviarlas a la API de OpenAI
 from langchain.text_splitter import CharacterTextSplitter 
 

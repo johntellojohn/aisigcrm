@@ -410,8 +410,9 @@ def chatbot():
     Retorna:
     - respuesta: Texto de respuesta del chatbot
     - json_gpt: JSON modificado (si se proporcionó uno)
-    - estado_conversacion: Estado actual ('pendiente', 'esperando confirmación', 'finalizado')
+    - estado_conversacion: Estado actual ('pendiente', 'finalizado')
     """
+    # - estado_conversacion: Estado actual ('pendiente', 'esperando confirmación', 'finalizado')
     
     # 1. OBTENER Y VALIDAR DATOS DE LA SOLICITUD
     try:
@@ -484,14 +485,9 @@ def chatbot():
         
         # 4. PREPARAR LOS DOCUMENTOS PARA EL MODELO
         input_documents = (
-<<<<<<< Updated upstream
             [Document(text) for text in docs] +    # Documentos relevantes
             [Document(text) for text in user_history] +  # Historial de usuario
             [Document(text) for text in base_conocimientos]  # Base de conocimiento general basada en archivos cargados
-=======
-            [Document(page_content=text) for text in docs] +    # Documentos relevantes
-            [Document(page_content=text) for text in user_history]  # Historial de usuario
->>>>>>> Stashed changes
         )
         
         # 5. CONSTRUIR EL PROMPT COMPLETO
@@ -519,13 +515,14 @@ def chatbot():
                 <Resumen amigable del JSON en formato lista>
 
                 ESTADO:
-                <palabra clave aquí: "pendiente", "esperando confirmación" o "finalizado">
+                <palabra clave aquí: "pendiente" o "finalizado">
 
                 # Estados posibles:
                 # "pendiente" → si aún falta información.
-                # "esperando confirmación" → si ya se completó todo y estás preguntando si desea modificar algo.
                 # "finalizado" → si el usuario confirma que ya no desea cambiar nada más.
             """
+            # "esperando confirmación" → si ya se completó todo y estás preguntando si desea modificar algo.
+            # <palabra clave aquí: "pendiente", "esperando confirmación" o "finalizado">
         else:
             full_prompt = pregunta  # Si no hay JSON, usar la pregunta directamente
             
@@ -671,42 +668,15 @@ def upsert_file():
     name_space = data.get('name_space')  # Usamos un solo namespace 'file'
     index_name = data.get('index')
 
-<<<<<<< Updated upstream
-    if not index_name or not file_url_id or not file_url or not name_space or not type_file:
-        return jsonify(
-            {
-                "status_code": 400,
-                "message": "Datos insuficientes. Se requiere (id_vector, link_file, type_file, index_name).",
-                "data": None
-            }
-        ), 400
-=======
     if not index_name or not id_vector or not file_url or not name_space or not type_file:
         return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
     if not file_url_id:
          return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
->>>>>>> Stashed changes
 
     try:
         print(f"Descargando archivo desde: {file_url}", flush=True)
         response = requests.get(file_url)
         response.raise_for_status()
-<<<<<<< Updated upstream
-
-        # Extraer el contenido según el tipo de archivo
-        text = extract_text(response.content, type_file)
-
-        if not text:
-            return jsonify(
-                {
-                    "status_code": 400,
-                    "message": "No se pudo extraer texto del archivo.",
-                    "data": None
-                }
-            ), 400
-
-        # Conexión a Pinecone
-=======
         file_bytes = response.content 
         
         text = "" 
@@ -794,77 +764,12 @@ def upsert_file():
             return jsonify(response="No se pudo extraer texto del archivo."), 400
         
         # --- Lógica de Pinecone con adaptación para chunking ---
->>>>>>> Stashed changes
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
         index_list_resp_pinecone = pc.list_indexes()
         current_pinecone_indices_names = [idx.name for idx in index_list_resp_pinecone.indexes]
         if index_name not in current_pinecone_indices_names:
             pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
 
-<<<<<<< Updated upstream
-        # Verificar si el índice existe, si no, crearlo
-        if index_name not in pc.list_indexes().names():
-            pc.create_index(
-                name=index_name,
-                dimension=1536,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1")
-            )
-
-        index = pc.Index(index_name)
-
-        # Embeddings de OpenAI
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-        instructions_values = embeddings.embed_query(text)
-
-        # Insertar o actualizar el archivo en Pinecone
-        index.upsert(
-            vectors=[
-                {
-                    "id": file_url_id,
-                    "values": instructions_values,
-                    "metadata": {
-                        "text": text,
-                        "file_url": file_url,
-                        "type_file": type_file
-                    }
-                }
-            ],
-            namespace=name_space
-        )
-
-        return jsonify(
-            {
-                "status_code": 200,
-                "message": "Información ingresada con éxito.",
-                "data": {
-                    "file_url_id": file_url_id,
-                    "file_url": file_url,
-                    "type_file": type_file,
-                    "namespace": name_space,
-                    "index_name": index_name
-                }
-            }
-        ), 200
-
-    except requests.exceptions.RequestException as e:
-        return jsonify(
-            {
-                "status_code": 400,
-                "message": f"Error al descargar el archivo: {str(e)}",
-                "data": None
-            }
-        ), 400
-
-    except Exception as e:
-        return jsonify(
-            {
-                "status_code": 500,
-                "message": f"Error inesperado: {str(e)}",
-                "data": None
-            }
-        ), 500
-=======
         # 2. OBTENCIÓN DE INSTANCIA DEL ÍNDICE
         index_pinecone_instance = pc.Index(index_name) 
         embeddings_openai_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY) 
@@ -1014,7 +919,6 @@ def upsert_file():
         print(f"Exception Args: {e.args}", flush=True)
         print(f"Full Traceback within upsertFile:\n{traceback.format_exc()}", flush=True)
         return jsonify(error=f"Error: {str(e)}", traceback=traceback.format_exc()), 500
->>>>>>> Stashed changes
 
 
 @app.route('/api/deleteFile', methods=['DELETE'])

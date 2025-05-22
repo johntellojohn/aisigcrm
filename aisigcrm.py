@@ -34,6 +34,8 @@ from PIL import Image # para abrir y manipular datos de imágenes
 import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
 import base64 # Para codificar imágenes y enviarlas a la API de OpenAI
 from langchain.text_splitter import CharacterTextSplitter 
+from dotenv import load_dotenv
+import mysql.connector
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -484,14 +486,9 @@ def chatbot():
         
         # 4. PREPARAR LOS DOCUMENTOS PARA EL MODELO
         input_documents = (
-<<<<<<< Updated upstream
-            [Document(text) for text in docs] +    # Documentos relevantes
-            [Document(text) for text in user_history] +  # Historial de usuario
-            [Document(text) for text in base_conocimientos]  # Base de conocimiento general basada en archivos cargados
-=======
             [Document(page_content=text) for text in docs] +    # Documentos relevantes
-            [Document(page_content=text) for text in user_history]  # Historial de usuario
->>>>>>> Stashed changes
+            [Document(page_content=text) for text in user_history] +  # Historial de usuario
+            [Document(page_content=text) for text in base_conocimientos]  # Historial de usuario
         )
         
         # 5. CONSTRUIR EL PROMPT COMPLETO
@@ -645,6 +642,133 @@ def chatbot():
             "tipo": str(exc_type.__name__)
         }), 500
     
+
+@app.route('/api/chatbot/v2', methods=['POST'])
+def chatbot_v2():
+    """   
+    Parámetros esperados en el JSON de la solicitud:
+    - question: La pregunta del usuario (requerido)
+    - user_id: ID del usuario (requerido)
+    - name_space: Namespace de Pinecone (requerido, e.g., el pdf_id)
+    - index: Nombre del índice Pinecone a usar (requerido)
+    """
+    
+    # 1. OBTENER Y VALIDAR DATOS DE LA SOLICITUD
+    try:
+        data = request.get_json()
+        pregunta_original = data.get('question')
+        user_id = data.get('user_id') 
+        name_space = data.get('name_space') 
+        index_name = data.get('index')      
+        
+        top_k = 5 
+
+        if not all([pregunta_original, user_id, name_space, index_name]):
+            return jsonify(response="Los campos 'question', 'user_id', 'name_space', y 'index' son requeridos."), 400
+            
+    except Exception as e:
+        print(f"Error procesando datos de entrada para chatbot_v2: {traceback.format_exc()}", flush=True)
+        return jsonify(response=f"Error procesando datos de entrada: {str(e)}"), 400
+    
+    # 2. CONFIGURACIÓN INICIAL Y CONEXIONES
+    try:
+        index_list_response = pc.list_indexes()
+        current_index_names = [idx_model.name for idx_model in index_list_response.indexes]
+        if index_name not in current_index_names:
+             return jsonify(error=f"El índice '{index_name}' no existe en Pinecone."), 404
+        index_instance = pc.Index(index_name)
+
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        
+        # 3. BUSCAR CONTEXTO RELEVANTE EN PINECONE
+        print(f"Buscando en Pinecone - Index: {index_name}, Namespace: {name_space}, TopK: {top_k}", flush=True)
+        print(f"Pregunta Original para embedding: {pregunta_original}", flush=True)
+        
+        query_vector = embeddings.embed_query(pregunta_original)
+        
+        search_results = index_instance.query(
+            namespace=name_space,
+            vector=query_vector,
+            top_k=top_k, 
+            include_metadata=True
+        )
+        
+        retrieved_docs_text = [
+            match['metadata']['text'] 
+            for match in search_results.get('matches', []) 
+            if 'metadata' in match and 'text' in match['metadata']
+        ]
+
+        if not retrieved_docs_text:
+            print(f"No se encontraron documentos relevantes en Pinecone.", flush=True)
+        else:
+            print(f"Documentos recuperados de Pinecone: {len(retrieved_docs_text)}", flush=True)
+
+        # 4. PREPARAR CONTEXTO Y PROMPT PARA LLM
+        context_string = "\n\n---\n\n".join(retrieved_docs_text)
+        
+        if not context_string.strip():
+            context_string = "No se encontró información contextual relevante en la base de datos de documentos para esta pregunta."
+
+        optimized_prompt = f"""Eres un asistente de IA altamente competente especializado en responder preguntas basándote ÚNICAMENTE en el CONTEXTO DEL DOCUMENTO proporcionado.
+        Tu tarea es analizar la PREGUNTA DEL USUARIO y el CONTEXTO DEL DOCUMENTO. El contexto puede contener varios fragmentos de información recuperados.
+
+        Instrucciones Importantes:
+        1.  Examina cuidadosamente TODO el CONTEXTO DEL DOCUMENTO para encontrar la información más relevante para responder la PREGUNTA DEL USUARIO.
+        2.  Sintetiza una respuesta coherente y concisa utilizando solo la información del CONTEXTO DEL DOCUMENTO.
+        3.  Si la información necesaria para responder completamente la pregunta no se encuentra en el CONTEXTO DEL DOCUMENTO, debes declararlo explícitamente. Por ejemplo, di: "Basado en la información proporcionada en el documento, no puedo responder [parte específica de la pregunta] porque no se encontró información al respecto."."
+        4.  NO inventes información, no hagas suposiciones fuera del texto proporcionado y NO utilices conocimiento externo. Tu conocimiento se limita estrictamente al CONTEXTO DEL DOCUMENTO.
+        5.  Si el contexto parece vacío o dice que no se encontró información, refleja eso en tu respuesta.
+
+        CONTEXTO DEL DOCUMENTO (puede contener varios fragmentos recuperados, usa los más relevantes):
+        \"\"\"
+        {context_string}
+        \"\"\"
+
+        PREGUNTA DEL USUARIO:
+        \"\"\"
+        {pregunta_original}
+        \"\"\"
+
+        Respuesta Detallada y Concisa (basada únicamente en el CONTEXTO DEL DOCUMENTO anterior):
+        """
+        
+        print("----- CHATBOT_V2: PROMPT PARA LLM -----", flush=True)
+        print(f"Prompt enviado al LLM (sin el contexto detallado para brevedad del log): PREGUNTA='{pregunta_original}', Num_Context_Chunks={len(retrieved_docs_text)}", flush=True)
+        print("----- FIN PROMPT PARA LLM -----", flush=True)
+        
+        # 5. EJECUTAR EL MODELO DE LENGUAJE
+        llm = ChatOpenAI(model_name='gpt-4o', openai_api_key=OPENAI_API_KEY, temperature=0.0) 
+        
+        llm_response = llm.invoke(optimized_prompt)
+        respuesta_llm = llm_response.content
+
+        print(f"CHATBOT_V2: Respuesta cruda del LLM: {respuesta_llm[:300]}...", flush=True)
+        
+        # 6. CONSTRUIR RESPUESTA FINAL
+        api_response = {
+            "respuesta": respuesta_llm.strip(),
+            "documentos_recuperados": len(retrieved_docs_text),
+            "top_k_configurado": top_k
+        }
+        
+        return jsonify(api_response), 200
+    
+    except openai.APIError as e_openai:
+        print(f"OpenAI API Error en chatbot_v2: {traceback.format_exc()}", flush=True)
+        return jsonify(response=f"Error de API OpenAI: {str(e_openai)}"), 500
+    except Exception as e:
+        print(f"Error general en chatbot_v2: {traceback.format_exc()}", flush=True)
+        exc_type, exc_obj, tb = sys.exc_info()
+        line_number = tb.tb_lineno if tb else "N/A"
+        filename = tb.tb_frame.f_code.co_filename if tb and tb.tb_frame else "N/A"
+        return jsonify({
+            "response": f"Ocurrió un error en chatbot_v2: {str(e)}",
+            "archivo": filename,
+            "linea": line_number,
+            "tipo": str(exc_type.__name__ if exc_type else "N/A")
+        }), 500
+
 @app.route('/api/deleteHistory', methods=['DELETE'])
 def delete_history():
     try:
@@ -665,48 +789,22 @@ def delete_history():
 @app.route('/api/upsertFile', methods=['POST'])
 def upsert_file():
     data = request.get_json()
+    id_vector = data.get('id_vector')
     file_url_id = data.get('link_file_id') 
     file_url = data.get('link_file')
     type_file = data.get('type_file') 
-    name_space = data.get('name_space')  # Usamos un solo namespace 'file'
+    name_space = data.get('name_space')  
     index_name = data.get('index')
 
-<<<<<<< Updated upstream
-    if not index_name or not file_url_id or not file_url or not name_space or not type_file:
-        return jsonify(
-            {
-                "status_code": 400,
-                "message": "Datos insuficientes. Se requiere (id_vector, link_file, type_file, index_name).",
-                "data": None
-            }
-        ), 400
-=======
     if not index_name or not id_vector or not file_url or not name_space or not type_file:
         return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
     if not file_url_id:
          return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
->>>>>>> Stashed changes
 
     try:
         print(f"Descargando archivo desde: {file_url}", flush=True)
         response = requests.get(file_url)
         response.raise_for_status()
-<<<<<<< Updated upstream
-
-        # Extraer el contenido según el tipo de archivo
-        text = extract_text(response.content, type_file)
-
-        if not text:
-            return jsonify(
-                {
-                    "status_code": 400,
-                    "message": "No se pudo extraer texto del archivo.",
-                    "data": None
-                }
-            ), 400
-
-        # Conexión a Pinecone
-=======
         file_bytes = response.content 
         
         text = "" 
@@ -794,77 +892,12 @@ def upsert_file():
             return jsonify(response="No se pudo extraer texto del archivo."), 400
         
         # --- Lógica de Pinecone con adaptación para chunking ---
->>>>>>> Stashed changes
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
         index_list_resp_pinecone = pc.list_indexes()
         current_pinecone_indices_names = [idx.name for idx in index_list_resp_pinecone.indexes]
         if index_name not in current_pinecone_indices_names:
             pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
 
-<<<<<<< Updated upstream
-        # Verificar si el índice existe, si no, crearlo
-        if index_name not in pc.list_indexes().names():
-            pc.create_index(
-                name=index_name,
-                dimension=1536,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1")
-            )
-
-        index = pc.Index(index_name)
-
-        # Embeddings de OpenAI
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-        instructions_values = embeddings.embed_query(text)
-
-        # Insertar o actualizar el archivo en Pinecone
-        index.upsert(
-            vectors=[
-                {
-                    "id": file_url_id,
-                    "values": instructions_values,
-                    "metadata": {
-                        "text": text,
-                        "file_url": file_url,
-                        "type_file": type_file
-                    }
-                }
-            ],
-            namespace=name_space
-        )
-
-        return jsonify(
-            {
-                "status_code": 200,
-                "message": "Información ingresada con éxito.",
-                "data": {
-                    "file_url_id": file_url_id,
-                    "file_url": file_url,
-                    "type_file": type_file,
-                    "namespace": name_space,
-                    "index_name": index_name
-                }
-            }
-        ), 200
-
-    except requests.exceptions.RequestException as e:
-        return jsonify(
-            {
-                "status_code": 400,
-                "message": f"Error al descargar el archivo: {str(e)}",
-                "data": None
-            }
-        ), 400
-
-    except Exception as e:
-        return jsonify(
-            {
-                "status_code": 500,
-                "message": f"Error inesperado: {str(e)}",
-                "data": None
-            }
-        ), 500
-=======
         # 2. OBTENCIÓN DE INSTANCIA DEL ÍNDICE
         index_pinecone_instance = pc.Index(index_name) 
         embeddings_openai_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY) 
@@ -1014,8 +1047,6 @@ def upsert_file():
         print(f"Exception Args: {e.args}", flush=True)
         print(f"Full Traceback within upsertFile:\n{traceback.format_exc()}", flush=True)
         return jsonify(error=f"Error: {str(e)}", traceback=traceback.format_exc()), 500
->>>>>>> Stashed changes
-
 
 @app.route('/api/deleteFile', methods=['DELETE'])
 def delete_file():
@@ -1323,6 +1354,173 @@ def upload_pdf_chat():
     except Exception as e:
         print(f"General Exception in uploadPdfChat: {traceback.format_exc()}", flush=True)
         return jsonify(error=f"Error inesperado: {str(e)}", traceback=traceback.format_exc()), 500
+
+load_dotenv()
+DB_HOST = os.getenv("DB_HOST")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+
+
+# --- Prompts ---
+PROMPT_SYSTEM_SQL_GENERATOR = """
+Eres un asistente de bases de datos experto en MySQL. Tu tarea es convertir preguntas en lenguaje natural en consultas SQL VÁLIDAS para MySQL.
+RECUERDA: Genera SOLO la consulta SQL, sin texto adicional, ni comillas ```sql``` al inicio o final, ni explicaciones. La consulta NUNCA debe empezar por la palabra 'sql'.
+La base de datos se llama 'crm_eva'.
+Aquí está la estructura de la tabla 'menu' con la que trabajarás:
+
+Tabla 'menu':
+- id (INT, PRIMARY KEY, AUTO_INCREMENT)
+- menu_id (INT, puede ser 0 si es un menú principal)
+- name (VARCHAR)
+- url (VARCHAR, puede ser '#' para menús no clickeables)
+- orden (INT)
+- icon (VARCHAR, puede ser NULL)
+- created_at (DATETIME)
+- updated_at (DATETIME)
+
+
+Tabla 'rol':
+- id (INT, PRIMARY KEY, AUTO_INCREMENT)
+- name (VARCHAR)
+- description (VARCHAR)
+- status (TINYINT)
+- created_at (DATETIME)
+- updated_at (DATETIME)
+
+Considera que 'menu_id' se refiere al 'id' de otro registro en la misma tabla 'menu', indicando una relación padre-hijo para submenús. Un menu_id de 0 significa que es un elemento de menú de nivel superior.
+
+SOLO devuelve la consulta SQL. No incluyas punto y coma al final a menos que sea estrictamente necesario para una consulta específica.
+"""
+
+PROMPT_SYSTEM_RESPONSE_GENERATOR = """
+Eres un asistente amigable que explica los resultados de una consulta a base de datos en lenguaje natural y conciso.
+"""
+
+def generate_sql_from_question(user_question):
+    """Llama a OpenAI para generar una consulta SQL."""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": PROMPT_SYSTEM_SQL_GENERATOR},
+                {"role": "user", "content": f"Convierte la siguiente pregunta a una consulta SQL para la tabla 'menu' descrita:\nPregunta: {user_question}\nSQL Query:"}
+            ],
+            temperature=0.2, 
+            max_tokens=150
+        )
+        sql_query = response.choices[0].message.content.strip()
+        # Eliminar posibles ```sql y ``` o comillas al inicio/final si el LLM las añade a pesar del prompt
+        if sql_query.startswith("```sql"):
+            sql_query = sql_query[6:]
+        if sql_query.endswith("```"):
+            sql_query = sql_query[:-3]
+        sql_query = sql_query.strip('"; ') # Eliminar punto y coma o comillas sueltas
+        return sql_query
+    except Exception as e:
+        app.logger.error(f"Error al generar SQL con OpenAI: {e}")
+        raise
+
+def execute_mysql_query(sql_query):
+    """Ejecuta la consulta SQL en MySQL y devuelve los resultados."""
+    results = []
+    conn = None
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(sql_query)
+        results = cursor.fetchall()
+        return results
+    except mysql.connector.Error as err:
+        app.logger.error(f"Error de MySQL: {err}")
+        raise ValueError(f"Error al ejecutar la consulta SQL: {err}")
+    finally:
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+def generate_natural_response(user_question, sql_query, db_results):
+    """Llama a OpenAI para generar una respuesta en lenguaje natural."""
+    try:
+        # Convertir resultados de DB a JSON string para el prompt
+        db_results_str = json.dumps(db_results, ensure_ascii=False, indent=2)
+
+        user_prompt_for_response = f"""
+        La pregunta original del usuario fue: "{user_question}"
+        La consulta SQL generada y ejecutada fue: "{sql_query}"
+        Los resultados COMPLETOS de la base de datos son (una lista de objetos JSON, donde cada objeto es una fila de la base de datos):
+        {db_results_str}
+
+        Por favor, proporciona una respuesta clara y en lenguaje natural al usuario basada en TODOS estos resultados y la pregunta original. Por ejemplo, si se piden nombres, lista todos los nombres encontrados.
+        Si no hay resultados (la lista JSON está vacía "[]"), indícalo amablemente diciendo que no se encontraron datos para su pregunta.
+        Si hubo un error evidente en los resultados (por ejemplo, si el JSON no es una lista o parece un mensaje de error), informa al usuario que no se pudo obtener la información y que podría haber un problema con la pregunta o la forma en que se procesó.
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": PROMPT_SYSTEM_RESPONSE_GENERATOR},
+                {"role": "user", "content": user_prompt_for_response}
+            ],
+            temperature=0.7,
+            max_tokens=500 # Ajusta según la longitud esperada de la respuesta
+        )
+        natural_answer = response.choices[0].message.content.strip()
+        return natural_answer
+    except Exception as e:
+        app.logger.error(f"Error al generar respuesta natural con OpenAI: {e}")
+        raise 
+
+@app.route('/api/consultaSql', methods=['POST'])
+def consulta_sql():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify(error="Cuerpo de la solicitud JSON vacío o malformado."), 400
+
+        pregunta_usuario = data.get('question')
+        user_id = data.get('user_id', 'default_user')
+
+        if not pregunta_usuario:
+            return jsonify(error="El parámetro 'question' (pregunta del usuario) es requerido."), 400
+
+        app.logger.info(f"Pregunta recibida: {pregunta_usuario}")
+
+        # Paso 1: Generar consulta SQL
+        app.logger.info("Generando consulta SQL...")
+        generated_sql = generate_sql_from_question(pregunta_usuario)
+        app.logger.info(f"SQL Generado: {generated_sql}")
+
+        if not generated_sql:
+            return jsonify(error="No se pudo generar la consulta SQL."), 500
+
+        # Paso 2: Ejecutar consulta SQL
+        app.logger.info("Ejecutando consulta SQL en MySQL...")
+        db_results = execute_mysql_query(generated_sql)
+        app.logger.info(f"Resultados de la DB (primeros 5 si hay muchos): {db_results[:5]}")
+
+        # Paso 3: Generar respuesta en lenguaje natural
+        app.logger.info("Generando respuesta en lenguaje natural...")
+        final_answer = generate_natural_response(pregunta_usuario, generated_sql, db_results)
+        app.logger.info(f"Respuesta final generada: {final_answer}")
+
+        return jsonify({
+            "user_question": pregunta_usuario,
+            "chatbot_answer": final_answer,
+            "generated_sql": generated_sql, 
+            "status": "success"
+        }), 200
+    except ValueError as ve: 
+        app.logger.error(f"Error de valor procesando la solicitud: {ve}")
+        return jsonify(error=str(ve)), 400 
+    except Exception as e:
+        app.logger.error(f"Error inesperado en /api/consultaSql: {traceback.format_exc()}")
+        return jsonify(error="Ocurrió un error inesperado al procesar la consulta."), 500
+
 
 ###############
 # ip and port #

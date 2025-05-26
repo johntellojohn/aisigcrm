@@ -631,23 +631,27 @@ def chatbot():
         return jsonify(respuestaIA), 200
     
     except Exception as e:
-
-        print("----- ERROR EN CHATBOT -----", flush=True) 
-        import traceback
-        print("Full Traceback:", flush=True)
-        traceback.print_exc(file=sys.stdout) 
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", flush=True)
+        print("!!!!! ERROR 500 DETECTADO EN /api/chatbot !!!!!", flush=True)
+        print(f"!!!!! Tipo de Excepción: {type(e).__name__}", flush=True)
+        print(f"!!!!! Mensaje de Error: {str(e)}", flush=True)
+        print("!!!!! TRAZA DE ERROR COMPLETA:", flush=True)
+        
+        traceback.print_exc(file=sys.stdout)
         sys.stdout.flush() 
+        
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", flush=True)
 
         exc_type, exc_obj, tb = sys.exc_info()
         line_number = tb.tb_lineno if tb else "N/A"
         filename = tb.tb_frame.f_code.co_filename if tb and tb.tb_frame else "N/A"
         
         error_response_data = {
-            "response": f"Ocurrió un error: {str(e)}",
-            "archivo": filename,
-            "linea": line_number,
-            "tipo": str(exc_type.__name__ if exc_type else "N/A"),
-            "detailed_traceback_in_server_logs": True
+            "response": f"Ocurrió un error INTERNO en el servidor: {str(e)}",
+            "archivo_error": filename,
+            "linea_error": line_number,
+            "tipo_error": str(exc_type.__name__ if exc_type else "N/A"),
+            "mensaje_debug": "Revisar los logs del servidor Docker para la traza completa."
         }
         return jsonify(error_response_data), 500
     #except Exception as e:
@@ -687,10 +691,10 @@ def upsert_file():
     file_url = data.get('link_file')
     type_file = data.get('type_file') 
     name_space = data.get('name_space')  # Usamos un solo namespace 'file'
-    index_name = data.get('index_name')
+    index_name = data.get('index')
 
     if not index_name or not id_vector or not file_url or not name_space or not type_file:
-        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index_name)."), 400
+        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
     if not file_url_id:
          return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
 

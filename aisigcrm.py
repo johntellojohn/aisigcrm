@@ -631,16 +631,36 @@ def chatbot():
         return jsonify(respuestaIA), 200
     
     except Exception as e:
-        # Manejo detallado de errores
+
+        print("----- ERROR EN CHATBOT -----", flush=True) 
+        import traceback
+        print("Full Traceback:", flush=True)
+        traceback.print_exc(file=sys.stdout) 
+        sys.stdout.flush() 
+
         exc_type, exc_obj, tb = sys.exc_info()
-        line_number = tb.tb_lineno
-        filename = tb.tb_frame.f_code.co_filename
-        return jsonify({
+        line_number = tb.tb_lineno if tb else "N/A"
+        filename = tb.tb_frame.f_code.co_filename if tb and tb.tb_frame else "N/A"
+        
+        error_response_data = {
             "response": f"Ocurrió un error: {str(e)}",
             "archivo": filename,
             "linea": line_number,
-            "tipo": str(exc_type.__name__)
-        }), 500
+            "tipo": str(exc_type.__name__ if exc_type else "N/A"),
+            "detailed_traceback_in_server_logs": True
+        }
+        return jsonify(error_response_data), 500
+    #except Exception as e:
+        # Manejo detallado de errores
+        #exc_type, exc_obj, tb = sys.exc_info()
+        #line_number = tb.tb_lineno
+        #filename = tb.tb_frame.f_code.co_filename
+        #return jsonify({
+            #"response": f"Ocurrió un error: {str(e)}",
+            #"archivo": filename,
+            #"linea": line_number,
+            #"tipo": str(exc_type.__name__)
+        #}), 500
     
 @app.route('/api/deleteHistory', methods=['DELETE'])
 def delete_history():
@@ -662,14 +682,15 @@ def delete_history():
 @app.route('/api/upsertFile', methods=['POST'])
 def upsert_file():
     data = request.get_json()
+    id_vector = data.get('id_vector')
     file_url_id = data.get('link_file_id') 
     file_url = data.get('link_file')
     type_file = data.get('type_file') 
     name_space = data.get('name_space')  # Usamos un solo namespace 'file'
-    index_name = data.get('index')
+    index_name = data.get('index_name')
 
     if not index_name or not id_vector or not file_url or not name_space or not type_file:
-        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
+        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index_name)."), 400
     if not file_url_id:
          return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
 

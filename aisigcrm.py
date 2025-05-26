@@ -31,7 +31,7 @@ from PyPDF2 import PdfReader
 from io import BytesIO # permite tratar bytes como si fueran un archivo.
 import pytesseract # librería que interactúa con el motor Tesseract OCR.
 from PIL import Image # para abrir y manipular datos de imágenes
-#import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
+import fitz # Alias para PyMuPDF, librería para trabajar con PDFs
 import base64 # Para codificar imágenes y enviarlas a la API de OpenAI
 from langchain.text_splitter import CharacterTextSplitter 
 
@@ -422,10 +422,11 @@ def chatbot():
         max_histories = data.get('max_histories', 10)
         name_space = data.get('name_space', 'real') 
         json_gpt = data.get('json_gpt')
-        
+        index_name = data.get('index')
+
         # Validar campos requeridos
-        if not pregunta or not user_id:
-            return jsonify(response="La pregunta y el ID de usuario son requeridos."), 400
+        if not pregunta or not user_id or not index_name:
+            return jsonify(response="La pregunta, el ID de usuario y el nombre del índice son requeridos."), 400
             
         user_id_int = int(user_id)  # Convertir a entero para consistencia
     
@@ -437,7 +438,7 @@ def chatbot():
         # Inicializar conexión con Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
         index = pc.Index(data.get('index'))  # Usar índice proporcionado
-        index_name = data.get('index')
+        
         
         # Inicializar embeddings de OpenAI
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
@@ -453,8 +454,10 @@ def chatbot():
             top_k=5,
             include_metadata=True
         )
-        docs = [match['metadata']['text'] for match in result['matches'] if 'metadata' in match]
-        
+
+        docs = [match['metadata']['text'] for match in result.get('matches', []) if 'metadata' in match and 'text' in match['metadata']]
+        #Uso de .get() para acceder a 'matches' de forma segura, evita un KeyError si 'matches' no está presente en la respuesta de Pinecone.
+
         # 3.2. Buscar historial previo del usuario
         prompt_history = index.query(
             namespace="user_history",
@@ -485,9 +488,9 @@ def chatbot():
         
         # 4. PREPARAR LOS DOCUMENTOS PARA EL MODELO
         input_documents = (
-            [Document(text) for text in docs] +    # Documentos relevantes
-            [Document(text) for text in user_history] +  # Historial de usuario
-            [Document(text) for text in base_conocimientos]  # Base de conocimiento general basada en archivos cargados
+            [Document(page_content=text) for text in docs] +    # Documentos relevantes
+            [Document(page_content=text) for text in user_history] +  # Historial de usuario
+            [Document(page_content=text) for text in base_conocimientos]  # Base de conocimiento general basada en archivos cargados
         )
         
         # 5. CONSTRUIR EL PROMPT COMPLETO
@@ -580,47 +583,89 @@ def chatbot():
             
         # 8. ACTUALIZAR HISTORIAL DE CONVERSACIÓN
         # 8.1. Construir nuevo historial
-        userHistory = (f"{user_history_string} - Respuesta: {pregunta} - Pregunta:{respuesta}")
+        userHistory = (f"{user_history_string} - Pregunta: {pregunta} - Respuesta:{respuesta}") # AQUI SE ESTA CONCATENANDO MUCHA HISTORIA Y ESTO SOBREPASA EL LIMITE DE 40960 BYTES POR CADA VECTOR EN PINECONE, Y A MEDIDA QUE AVANZA LA CONVERSACION SE HACE MAS EXTENSA
         count = userHistory.count("- Respuesta:")
         
         # 8.2. Limitar historial según max_histories
-        if count == max_histories:
+        if count > max_histories:
             patron = re.compile(r"Historial de conversacion:(.*?- Respuesta:.*? - Pregunta:.*?)- Respuesta:", re.DOTALL)
             userHistory = re.sub(patron, "Historial de conversacion:\n-Respuesta:", userHistory, 1)
-        
+            print(f"Historial acortado por max_histories. Nuevo tamaño (caracteres): {len(userHistory)}", flush=True)
+
         # 8.3. Actualizar vector en Pinecone
-        instructions_values = embeddings.embed_query(userHistory)
-        existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
+        #instructions_values = embeddings.embed_query(userHistory)
+        #existing_new_vector = index.fetch(ids=[user_id], namespace="user_history")
+        #current_datetime = datetime.now().isoformat()
+
+        # 8.3. Preparar historial para metadatos (userHistory_for_metadata) y truncar si excede el límite de bytes.
+        userHistory_for_metadata = userHistory # Este es el que se guardará en metadata['text']
+
+        MAX_METADATA_BYTES = 40000  # Límite de Pinecone es 40960 bytes, damos un margen de seguridad.
+        userHistory_bytes_check = userHistory_for_metadata.encode('utf-8', errors='ignore')
+
+        if len(userHistory_bytes_check) > MAX_METADATA_BYTES:
+            # Si excede el límite, truncar desde el principio para mantener lo más reciente.
+            # Tomamos los últimos MAX_METADATA_BYTES bytes del historial codificado.
+            bytes_to_keep_for_metadata = userHistory_bytes_check[-MAX_METADATA_BYTES:]
+            # Decodificar de nuevo a string. 'errors='replace'' maneja errores si se corta un caracter multibyte,
+            # reemplazándolo con el carácter �.
+            userHistory_for_metadata = bytes_to_keep_for_metadata.decode('utf-8', errors='replace') 
+            
+            print(f"ADVERTENCIA: Historial para metadatos fue truncado debido al límite de tamaño de Pinecone.", flush=True)
+            print(f"           Tamaño original (bytes): {len(userHistory_bytes_check)}, Tamaño truncado para metadata (bytes): {len(userHistory_for_metadata.encode('utf-8', errors='ignore'))}", flush=True)
+        
+        # if user_id not in existing_new_vector['vectors']:
+        #     # Crear nuevo vector de historial
+        #     index.upsert(
+        #         vectors=[{
+        #             "id": user_id,
+        #             "values": instructions_values,
+        #             "metadata": {
+        #                 "text": "Historial de conversacion:\n" + userHistory,
+        #                 "date": current_datetime
+        #             }
+        #         }],
+        #         namespace="user_history"
+        #     )
+        # else:
+        #     # Actualizar vector existente
+        #     index.delete(ids=user_id, namespace="user_history")
+        #     index.upsert( #CUANDO SE INTENTA SUBIR VECTOR CON METADATOS GRANDES, PINECONE RECHAZA LA SOLICITUD 
+        #         vectors=[{
+        #             "id": user_id,
+        #             "values": instructions_values,
+        #             "metadata": {
+        #                 "text": userHistory, #AQUI DA EL ERROR
+        #                 "date": current_datetime
+        #             }
+        #         }],
+        #         namespace="user_history"
+        #     )
+        # 8.4. Actualizar vector en Pinecone
+        # El embedding se genera a partir de 'userHistory' (que es el historial completo o limitado por max_histories).
+        instructions_values = embeddings.embed_query(userHistory) 
+        
+        # 'user_id' ya es un entero debido a user_id_int. Para Pinecone, los IDs de vector deben ser strings.
+        user_id_pinecone_str = str(user_id) 
+        
+        # No es necesario hacer fetch ni delete antes del upsert.
+        # Pinecone 'upsert' actualiza un vector si el ID existe, o lo crea si no existe.
         current_datetime = datetime.now().isoformat()
         
-        if user_id not in existing_new_vector['vectors']:
-            # Crear nuevo vector de historial
-            index.upsert(
-                vectors=[{
-                    "id": user_id,
-                    "values": instructions_values,
-                    "metadata": {
-                        "text": "Historial de conversacion:\n" + userHistory,
-                        "date": current_datetime
-                    }
-                }],
-                namespace="user_history"
-            )
-        else:
-            # Actualizar vector existente
-            index.delete(ids=user_id, namespace="user_history")
-            index.upsert(
-                vectors=[{
-                    "id": user_id,
-                    "values": instructions_values,
-                    "metadata": {
-                        "text": userHistory,
-                        "date": current_datetime
-                    }
-                }],
-                namespace="user_history"
-            )
-        
+        metadata_payload_for_history = {
+            "text": userHistory_for_metadata,
+            "date": current_datetime
+        }
+
+        # Upsert directamente.
+        index.upsert(
+            vectors=[{
+                "id": user_id_pinecone_str, # ID del vector es el user_id (convertido a string).
+                "values": instructions_values,
+                "metadata": metadata_payload_for_history
+            }],
+            namespace="user_history"
+        )
         # 9. CONSTRUIR RESPUESTA FINAL
         respuestaIA = {
             "respuesta": respuesta_texto,
@@ -641,6 +686,7 @@ def chatbot():
         sys.stdout.flush() 
         
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", flush=True)
+
 
         exc_type, exc_obj, tb = sys.exc_info()
         line_number = tb.tb_lineno if tb else "N/A"

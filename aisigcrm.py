@@ -789,21 +789,21 @@ def delete_history():
 @app.route('/api/upsertFile', methods=['POST'])
 def upsert_file():
     data = request.get_json()
-    id_vector = data.get('id_vector')
     file_url_id = data.get('link_file_id') 
     file_url = data.get('link_file')
     type_file = data.get('type_file') 
     name_space = data.get('name_space')  
     index_name = data.get('index')
 
-    if not index_name or not id_vector or not file_url or not name_space or not type_file:
-        return jsonify(response="Se requiere de la siguiente información (id_vector, link_file, type_file, name_space, index)."), 400
+    if not index_name or not file_url or not name_space or not type_file:
+        return jsonify(response="Se requiere de la siguiente información (link_file, type_file, name_space, index)."), 400
     if not file_url_id:
          return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
 
     try:
         print(f"Descargando archivo desde: {file_url}", flush=True)
-        response = requests.get(file_url)
+        
+        response = requests.get(file_url, verify=False)
         response.raise_for_status()
         file_bytes = response.content 
         

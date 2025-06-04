@@ -10,6 +10,8 @@ COPY . /app
 # Instalar las dependencias desde requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN pip install --no-cache-dir --upgrade mysql-connector-python
+
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-spa \

@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* # Clean up apt cache
 
 # Exponer el puerto que usa la aplicación
-EXPOSE 5010
+EXPOSE 5015
 
 # Comando para ejecutar la aplicación
 CMD ["python", "aisigcrm.py"]

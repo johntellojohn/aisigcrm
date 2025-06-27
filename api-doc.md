@@ -198,6 +198,39 @@
 *Dependencias Externas:* PyMuPDF, Pillow, pytesseract, langchain-openai, pinecone-client
 *Dependencias Internas:* base64, PINECONE_API_KEY_PRUEBAS, OPENAI_API_KEY
 
+* @app.route('/api/deleteFile', methods=['DELETE']): Elimina un vector previamente almacenado en Pinecone, asociado a un archivo específico, dentro de un espacio de nombres determinado.
+
+*Ejemplo de Entrada:* 
+    {
+    "file_id": "[string]",        // Identificador único del vector/archivo que se desea eliminar del índice.
+    "namespace": "[string]",      // Espacio de nombres en Pinecone donde se encuentra el vector.
+    "index": "[string]"           // Nombre del índice en Pinecone desde el cual se eliminará el vector.
+    }
+*Salida Esperada:*
+    {
+    "response": "Archivo [file_id] eliminado correctamente en namespace [namespace].",
+    "status_code": 200
+    }
+*Dependencias Externas:* pinecone-client, openai, flask
+*Dependencias Internas:* PINECONE_API_KEY_PRUEBAS, OPENAI_API_KEY
+
+* @app.route('/api/consultaSql', methods=['POST']): Recibe una pregunta en lenguaje natural del usuario, la transforma en una consulta SQL, la ejecuta sobre una base de datos MySQL y genera una respuesta en lenguaje natural basada en los resultados obtenidos.
+*Ejemplo de Entrada:* 
+    {
+    "question": "[string]",     // Pregunta en lenguaje natural formulada por el usuario.
+    "user_id": "[string]"       // (Opcional) Identificador del usuario que realiza la consulta.
+    }
+*Salida Esperada:*
+    {
+    "user_question": "[string]",        // Pregunta original realizada por el usuario.
+    "chatbot_answer": "[string]",       // Respuesta en lenguaje natural generada a partir de los resultados de la consulta.
+    "generated_sql": "[string]",        // Consulta SQL generada a partir de la pregunta.
+    "status": "success"
+    }
+*Dependencias Externas:* flask, mysql-connector-python, openai (u otra librería LLM si se usa para la generación SQL o respuesta), traceback
+*Dependencias Internas:* generate_sql_from_question, execute_mysql_query, generate_natural_response
+
+
 ## Notas: Dependencias Críticas y Consideraciones para Refactorización
 * Dependencias Críticas: 
     - Gestión de APIs de OpenAI y Pinecone.

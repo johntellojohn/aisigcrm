@@ -1072,6 +1072,63 @@ def delete_file():
     except Exception as e:
         return jsonify(response=f"Ocurrió un error: {str(e)}", status_code=500), 500
 
+@app.route('/api/verifyFileDeletion', methods=['POST'])
+def verify_file_deletion():
+    """
+    Verifica si un archivo ha sido eliminado de la base de datos vectorial (Pinecone).
+    Se asume que un archivo eliminado no debería existir al ser consultado por su ID.
+
+    Parámetros esperados en el JSON de la solicitud:
+    - file_id: El ID del archivo a verificar (puede ser el ID base o un ID de chunk) (requerido)
+    - namespace: El namespace de Pinecone donde se encuentra el archivo (requerido)
+    - index: El nombre del índice de Pinecone a usar (requerido)
+
+    Retorna:
+    - JSON con `success: true` si el archivo no se encuentra, `false` si se encuentra o hay un error.
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'index' not in data or 'file_id' not in data or 'namespace' not in data:
+            return jsonify(response="Datos de entrada inválidos. Se requiere 'index', 'file_id' y 'namespace'."), 400
+
+        index_name = data.get('index')
+        file_id_to_check = data.get('file_id')
+        namespace = data.get('namespace')
+
+        pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY')) 
+
+        index_list_response = pc.list_indexes()
+        current_index_names = [idx_model.name for idx_model in index_list_response.indexes]
+        if index_name not in current_index_names:
+            return jsonify(success=False, message=f"El índice '{index_name}' no existe en Pinecone."), 404
+
+        index_instance = pc.Index(index_name)
+
+        # Intentar obtener el vector por su ID. Si no se encuentra, significa que fue eliminado.
+        fetch_response = index_instance.fetch(ids=[file_id_to_check], namespace=namespace)
+
+        if not fetch_response['vectors']:
+            return jsonify(success=True, message=f"El archivo con ID '{file_id_to_check}' no se encontró en el namespace '{namespace}', lo que indica que fue eliminado o no existía."), 200
+        else:
+            return jsonify(success=False, message=f"El archivo con ID '{file_id_to_check}' todavía existe en el namespace '{namespace}'. La eliminación no fue verificada."), 409 # Conflict
+
+    except openai.APIError as e_openai:
+        print(f"OpenAI API Error en verifyFileDeletion (inesperado): {traceback.format_exc()}", flush=True)
+        return jsonify(success=False, message=f"Error de API OpenAI inesperado: {str(e_openai)}"), 500
+    except Exception as e:
+        print(f"Error general en verifyFileDeletion: {traceback.format_exc()}", flush=True)
+        exc_type, exc_obj, tb = sys.exc_info()
+        line_number = tb.tb_lineno if tb else "N/A"
+        filename = tb.tb_frame.f_code.co_filename if tb and tb.tb_frame else "N/A"
+        return jsonify({
+            "success": False,
+            "message": f"Ocurrió un error inesperado al verificar la eliminación: {str(e)}",
+            "archivo": filename,
+            "linea": line_number,
+            "tipo": str(exc_type.__name__ if exc_type else "N/A")
+        }), 500
+
 def extract_text(content, file_type):
     """ Extrae el texto del archivo según su tipo. """
     text = ""
@@ -1522,6 +1579,154 @@ def consulta_sql():
         return jsonify(error="Ocurrió un error inesperado al procesar la consulta."), 500
 
 
+app.config['JSON_AS_ASCII'] = False
+
+EXTRACTION_SYSTEM_PROMPT = """
+Eres un asistente experto en analizar documentos e imágenes. 
+Tu única tarea es extraer la información solicitada por el usuario y devolverla SIEMPRE en un formato JSON válido.
+No añadas texto explicativo, notas o comentarios fuera del objeto JSON.
+Si no puedes encontrar la información solicitada, devuelve un JSON con un campo que indique el error, por ejemplo: {"error_analisis": "No se encontró la información solicitada en el documento."}.
+"""
+
+SUMMARY_SYSTEM_PROMPT = """
+Eres un asistente eficiente. Tu tarea es tomar una pregunta original de un usuario y un conjunto de datos en formato JSON que fueron extraídos de un documento.
+Basado en ambos, genera una respuesta clara, concisa y en lenguaje natural que responda directamente a la pregunta del usuario utilizando los datos proporcionados.
+No te limites a listar los datos; intégralos en una respuesta según como pide.
+"""
+
+def extraer_texto_imagen(image_bytes):
+    """Extrae texto de una imagen usando Tesseract OCR."""
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        text = pytesseract.image_to_string(img, lang='spa+eng')
+        return text.strip() if text else "No se detectó texto en la imagen."
+    except Exception as e:
+        print(f"Error durante OCR con Tesseract: {e}", flush=True)
+        return f"Error en OCR: {str(e)}"
+
+def extraer_texto_pdf(pdf_bytes):
+    """Extrae todo el contenido textual y el texto de las imágenes (OCR) de un PDF."""
+    full_document_content = []
+    try:
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        print(f"Procesando PDF de {len(pdf_document)} páginas...")
+
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            page_number_for_display = page_num + 1
+
+            page_text = page.get_text("text")
+            if page_text.strip():
+                full_document_content.append(f"--- INICIO TEXTO PÁGINA {page_number_for_display} ---\n{page_text.strip()}\n--- FIN TEXTO PÁGINA {page_number_for_display} ---")
+
+            for img_idx, img_info in enumerate(page.get_images(full=True)):
+                xref = img_info[0]
+                try:
+                    base_image = pdf_document.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    ocr_text = extraer_texto_imagen(image_bytes)
+                    if "No se detectó texto" not in ocr_text and "Error en OCR" not in ocr_text:
+                        full_document_content.append(f"--- INICIO TEXTO DE IMAGEN {img_idx + 1} (PÁGINA {page_number_for_display}) ---\n{ocr_text}\n--- FIN TEXTO DE IMAGEN ---")
+                except Exception as e_img:
+                    print(f"No se pudo procesar una imagen en la página {page_number_for_display}: {e_img}")
+        
+        return "\n\n".join(full_document_content)
+    except Exception as e:
+        print(f"Error procesando el PDF: {e}")
+        return f"Error al leer el contenido del PDF: {str(e)}"
+
+def generar_respuesta(user_prompt, extracted_json_data):
+    """Toma el prompt original y el JSON extraído para generar una respuesta conversacional."""
+    data_string = json.dumps(extracted_json_data, indent=2, ensure_ascii=False)
+    
+    summary_user_prompt = f"""
+    PREGUNTA ORIGINAL DEL USUARIO:
+    "{user_prompt}"
+
+    DATOS ESTRUCTURADOS EXTRAÍDOS DEL DOCUMENTO (JSON):
+    ```json
+    {data_string}
+    ```
+    Por favor, genera una respuesta basada en la pregunta y los datos.
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": summary_user_prompt}
+            ],
+            temperature=0.5,
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error al generar el resumen conversacional: {e}")
+        return "Se extrajeron los datos, pero ocurrió un error al generar el resumen final."
+
+@app.route('/analizardoc', methods=['POST'])
+def analizardoc():
+    data = request.get_json()
+    if not data or 'file_url' not in data or 'prompt' not in data:
+        return jsonify({"error": "Faltan los parámetros 'file_url' o 'prompt'"}), 400
+
+    file_url = data['file_url']
+    user_prompt = data['prompt']
+    file_type = file_url.split('?')[0].split('.')[-1].lower()
+
+    try:
+        response = requests.get(file_url, verify=False)
+        response.raise_for_status()
+        file_bytes = response.content
+
+        is_image_direct = file_type in ['png', 'jpg', 'jpeg', 'webp', 'gif']
+        
+        messages_for_extraction = [{"role": "system", "content": EXTRACTION_SYSTEM_PROMPT}]
+
+        if is_image_direct:
+            messages_for_extraction.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": file_url}},
+                ],
+            })
+        elif file_type == 'pdf':
+            document_context = extraer_texto_pdf(file_bytes)
+            full_user_prompt = f'PROMPT DEL USUARIO: "{user_prompt}"\n\nCONTEXTO DEL DOCUMENTO EXTRAÍDO:\n---\n{document_context}\n---'
+            messages_for_extraction.append({"role": "user", "content": full_user_prompt})
+        else:
+            return jsonify({"error": f"Tipo de archivo '{file_type}' no soportado."}), 400
+
+    except Exception as e:
+        return jsonify({"error": f"Error al descargar o procesar el archivo: {str(e)}"}), 500
+
+    try:
+        extraction_response = client.chat.completions.create(
+            model="gpt-4o",
+            response_format={"type": "json_object"},
+            messages=messages_for_extraction,
+            max_tokens=4096,
+        )
+        
+        content_string = extraction_response.choices[0].message.content
+        if content_string is None:
+             return jsonify({"error": "La IA no generó el JSON. Razón: " + extraction_response.choices[0].finish_reason}), 500
+        
+        structured_data_object = json.loads(content_string)
+
+        conversational_response = generar_respuesta(user_prompt, structured_data_object)
+
+        return jsonify({
+            "structured_data": structured_data_object,
+            "conversational_response": conversational_response
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Error en la llamada a OpenAI: {str(e)}"}), 500
+    
 ###############
 # ip and port #
 ###############

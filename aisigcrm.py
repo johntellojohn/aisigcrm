@@ -1738,7 +1738,7 @@ def generar_respuesta(user_prompt, extracted_json_data):
         print(f"Error al generar el resumen conversacional: {e}")
         return "Se extrajeron los datos, pero ocurrió un error al generar el resumen final."
 
-@app.route('/analizardoc', methods=['POST'])
+@app.route('/api/analizardoc', methods=['POST'])
 def analizardoc():
     data = request.get_json()
     if not data or 'file_url' not in data or 'prompt' not in data:

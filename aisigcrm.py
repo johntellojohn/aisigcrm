@@ -36,6 +36,8 @@ import base64 # Para codificar imágenes y enviarlas a la API de OpenAI
 from langchain.text_splitter import CharacterTextSplitter 
 from dotenv import load_dotenv
 import mysql.connector
+from pydantic import BaseModel
+from typing import Dict, Any, List
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -1145,6 +1147,63 @@ def delete_file():
     except Exception as e:
         return jsonify(response=f"Ocurrió un error: {str(e)}", status_code=500), 500
 
+@app.route('/api/verifyFileDeletion', methods=['POST'])
+def verify_file_deletion():
+    """
+    Verifica si un archivo ha sido eliminado de la base de datos vectorial (Pinecone).
+    Se asume que un archivo eliminado no debería existir al ser consultado por su ID.
+
+    Parámetros esperados en el JSON de la solicitud:
+    - file_id: El ID del archivo a verificar (puede ser el ID base o un ID de chunk) (requerido)
+    - namespace: El namespace de Pinecone donde se encuentra el archivo (requerido)
+    - index: El nombre del índice de Pinecone a usar (requerido)
+
+    Retorna:
+    - JSON con `success: true` si el archivo no se encuentra, `false` si se encuentra o hay un error.
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'index' not in data or 'file_id' not in data or 'namespace' not in data:
+            return jsonify(response="Datos de entrada inválidos. Se requiere 'index', 'file_id' y 'namespace'."), 400
+
+        index_name = data.get('index')
+        file_id_to_check = data.get('file_id')
+        namespace = data.get('namespace')
+
+        pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY')) 
+
+        index_list_response = pc.list_indexes()
+        current_index_names = [idx_model.name for idx_model in index_list_response.indexes]
+        if index_name not in current_index_names:
+            return jsonify(success=False, message=f"El índice '{index_name}' no existe en Pinecone."), 404
+
+        index_instance = pc.Index(index_name)
+
+        # Intentar obtener el vector por su ID. Si no se encuentra, significa que fue eliminado.
+        fetch_response = index_instance.fetch(ids=[file_id_to_check], namespace=namespace)
+
+        if not fetch_response['vectors']:
+            return jsonify(success=True, message=f"El archivo con ID '{file_id_to_check}' no se encontró en el namespace '{namespace}', lo que indica que fue eliminado o no existía."), 200
+        else:
+            return jsonify(success=False, message=f"El archivo con ID '{file_id_to_check}' todavía existe en el namespace '{namespace}'. La eliminación no fue verificada."), 409 # Conflict
+
+    except openai.APIError as e_openai:
+        print(f"OpenAI API Error en verifyFileDeletion (inesperado): {traceback.format_exc()}", flush=True)
+        return jsonify(success=False, message=f"Error de API OpenAI inesperado: {str(e_openai)}"), 500
+    except Exception as e:
+        print(f"Error general en verifyFileDeletion: {traceback.format_exc()}", flush=True)
+        exc_type, exc_obj, tb = sys.exc_info()
+        line_number = tb.tb_lineno if tb else "N/A"
+        filename = tb.tb_frame.f_code.co_filename if tb and tb.tb_frame else "N/A"
+        return jsonify({
+            "success": False,
+            "message": f"Ocurrió un error inesperado al verificar la eliminación: {str(e)}",
+            "archivo": filename,
+            "linea": line_number,
+            "tipo": str(exc_type.__name__ if exc_type else "N/A")
+        }), 500
+
 def extract_text(content, file_type):
     """ Extrae el texto del archivo según su tipo. """
     text = ""
@@ -1595,9 +1654,566 @@ def consulta_sql():
         return jsonify(error="Ocurrió un error inesperado al procesar la consulta."), 500
 
 
+app.config['JSON_AS_ASCII'] = False
+
+EXTRACTION_SYSTEM_PROMPT = """
+Eres un asistente experto en analizar documentos e imágenes. 
+Tu única tarea es extraer la información solicitada por el usuario y devolverla SIEMPRE en un formato JSON válido.
+No añadas texto explicativo, notas o comentarios fuera del objeto JSON.
+Si no puedes encontrar la información solicitada, devuelve un JSON con un campo que indique el error, por ejemplo: {"error_analisis": "No se encontró la información solicitada en el documento."}.
+"""
+
+SUMMARY_SYSTEM_PROMPT = """
+Eres un asistente eficiente. Tu tarea es tomar una pregunta original de un usuario y un conjunto de datos en formato JSON que fueron extraídos de un documento.
+Basado en ambos, genera una respuesta clara, concisa y en lenguaje natural que responda directamente a la pregunta del usuario utilizando los datos proporcionados.
+No te limites a listar los datos; intégralos en una respuesta según como pide.
+"""
+
+def extraer_texto_imagen(image_bytes):
+    """Extrae texto de una imagen usando Tesseract OCR."""
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        text = pytesseract.image_to_string(img, lang='spa+eng')
+        return text.strip() if text else "No se detectó texto en la imagen."
+    except Exception as e:
+        print(f"Error durante OCR con Tesseract: {e}", flush=True)
+        return f"Error en OCR: {str(e)}"
+
+def extraer_texto_pdf(pdf_bytes):
+    """Extrae todo el contenido textual y el texto de las imágenes (OCR) de un PDF."""
+    full_document_content = []
+    try:
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        print(f"Procesando PDF de {len(pdf_document)} páginas...")
+
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            page_number_for_display = page_num + 1
+
+            page_text = page.get_text("text")
+            if page_text.strip():
+                full_document_content.append(f"--- INICIO TEXTO PÁGINA {page_number_for_display} ---\n{page_text.strip()}\n--- FIN TEXTO PÁGINA {page_number_for_display} ---")
+
+            for img_idx, img_info in enumerate(page.get_images(full=True)):
+                xref = img_info[0]
+                try:
+                    base_image = pdf_document.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    ocr_text = extraer_texto_imagen(image_bytes)
+                    if "No se detectó texto" not in ocr_text and "Error en OCR" not in ocr_text:
+                        full_document_content.append(f"--- INICIO TEXTO DE IMAGEN {img_idx + 1} (PÁGINA {page_number_for_display}) ---\n{ocr_text}\n--- FIN TEXTO DE IMAGEN ---")
+                except Exception as e_img:
+                    print(f"No se pudo procesar una imagen en la página {page_number_for_display}: {e_img}")
+        
+        return "\n\n".join(full_document_content)
+    except Exception as e:
+        print(f"Error procesando el PDF: {e}")
+        return f"Error al leer el contenido del PDF: {str(e)}"
+
+def generar_respuesta(user_prompt, extracted_json_data):
+    """Toma el prompt original y el JSON extraído para generar una respuesta conversacional."""
+    data_string = json.dumps(extracted_json_data, indent=2, ensure_ascii=False)
+    
+    summary_user_prompt = f"""
+    PREGUNTA ORIGINAL DEL USUARIO:
+    "{user_prompt}"
+
+    DATOS ESTRUCTURADOS EXTRAÍDOS DEL DOCUMENTO (JSON):
+    ```json
+    {data_string}
+    ```
+    Por favor, genera una respuesta basada en la pregunta y los datos.
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": summary_user_prompt}
+            ],
+            temperature=0.5,
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error al generar el resumen conversacional: {e}")
+        return "Se extrajeron los datos, pero ocurrió un error al generar el resumen final."
+
+@app.route('/api/analizardoc', methods=['POST'])
+def analizardoc():
+    data = request.get_json()
+    if not data or 'file_url' not in data or 'prompt' not in data:
+        return jsonify({"error": "Faltan los parámetros 'file_url' o 'prompt'"}), 400
+
+    file_url = data['file_url']
+    user_prompt = data['prompt']
+    file_type = file_url.split('?')[0].split('.')[-1].lower()
+
+    try:
+        response = requests.get(file_url, verify=False)
+        response.raise_for_status()
+        file_bytes = response.content
+
+        is_image_direct = file_type in ['png', 'jpg', 'jpeg', 'webp', 'gif']
+        
+        messages_for_extraction = [{"role": "system", "content": EXTRACTION_SYSTEM_PROMPT}]
+
+        if is_image_direct:
+            messages_for_extraction.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": file_url}},
+                ],
+            })
+        elif file_type == 'pdf':
+            document_context = extraer_texto_pdf(file_bytes)
+            full_user_prompt = f'PROMPT DEL USUARIO: "{user_prompt}"\n\nCONTEXTO DEL DOCUMENTO EXTRAÍDO:\n---\n{document_context}\n---'
+            messages_for_extraction.append({"role": "user", "content": full_user_prompt})
+        else:
+            return jsonify({"error": f"Tipo de archivo '{file_type}' no soportado."}), 400
+
+    except Exception as e:
+        return jsonify({"error": f"Error al descargar o procesar el archivo: {str(e)}"}), 500
+
+    try:
+        extraction_response = client.chat.completions.create(
+            model="gpt-4o",
+            response_format={"type": "json_object"},
+            messages=messages_for_extraction,
+            max_tokens=4096,
+        )
+        
+        content_string = extraction_response.choices[0].message.content
+        if content_string is None:
+             return jsonify({"error": "La IA no generó el JSON. Razón: " + extraction_response.choices[0].finish_reason}), 500
+        
+        structured_data_object = json.loads(content_string)
+
+        conversational_response = generar_respuesta(user_prompt, structured_data_object)
+
+        return jsonify({
+            "structured_data": structured_data_object,
+            "conversational_response": conversational_response
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Error en la llamada a OpenAI: {str(e)}"}), 500
+   
+class ChatRequest(BaseModel):
+    flujo_id: int
+    chat_id: str
+    mensaje_usuario: str
+    estado_actual: dict
+
+class ChatResponse(BaseModel):
+    mensaje_bot: str
+    nuevo_estado: dict
+
+def get_db_session():
+    """Provides a database connection context."""
+    db = None 
+    try:
+        db = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_DATABASE
+        )
+        yield db
+    finally:
+        if db and db.is_connected():
+            db.close()
+
+def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Llama a las APIs externas para poblar las opciones de los pasos que lo requieran."""
+    for paso in pasos_config:
+        if paso.get('tipo') == 'API' and (not paso.get('data') or paso.get('sin_datos')):
+            print(f"--- Verificando paso API: '{paso.get('nombre')}' ---", flush=True)
+            requisitos_completos = True
+            params_requeridos_str = paso.get('parametros_requeridos', '')
+            params_requeridos = [p.strip() for p in params_requeridos_str.split(';')] if params_requeridos_str else []
+
+            if not params_requeridos:
+                print(f"Paso '{paso.get('nombre')}' no tiene parámetros requeridos. Se llamará a la API.", flush=True)
+            else:
+                for param in params_requeridos:
+                    if estado_actual.get(param) is None or estado_actual.get(param) == '':
+                        print(f"Requisito '{param}' para el paso '{paso.get('nombre')}' no está en el estado actual. Saltando llamada API.", flush=True)
+                        requisitos_completos = False
+                        break
+            
+            if requisitos_completos:
+                try:
+                    payload = {param: estado_actual.get(param) for param in params_requeridos}
+                    method = paso.get('method', 'GET').upper()
+                    headers = {'Content-Type': 'application/json'}
+                    
+                    print(f"--- INICIANDO LLAMADA API EXTERNA ---", flush=True)
+                    print(f"Para el paso: '{paso.get('nombre')}'", flush=True)
+                    print(f"URL: {paso.get('url')}, Method: {method}", flush=True)
+                    print(f"Payload: {json.dumps(payload)}", flush=True)
+                    
+                    response = requests.request(
+                        method=method,
+                        url=paso['url'],
+                        json=payload, 
+                        headers=headers,
+                        timeout=60,
+                        verify=False
+                    )
+
+                    print(f"Respuesta de API Externa: Código de Estado = {response.status_code}", flush=True)
+
+                    if response.status_code == 200:
+                        api_data = response.json()
+                        lista_de_opciones = None
+                        if paso.get('lista'):
+                            keys = paso['lista'].split('.') 
+                            temp_data = api_data
+                            is_valid = True
+                            for key in keys: 
+                                if isinstance(temp_data, dict) and key in temp_data:
+                                    temp_data = temp_data[key]
+                                else:
+                                    is_valid = False
+                                    break
+                            if is_valid:
+                                lista_de_opciones = temp_data
+                        
+                        if isinstance(lista_de_opciones, list) and lista_de_opciones:
+                            first_item = lista_de_opciones[0]
+                            
+                            if isinstance(first_item, dict):
+                                opciones_finales = [str(item.get(paso['valor'])) for item in lista_de_opciones if isinstance(item, dict) and paso.get('valor') in item]
+                                paso['data'] = opciones_finales
+                                paso['data_key'] = lista_de_opciones 
+                                print(f"Éxito (Objetos): Se obtuvieron {len(opciones_finales)} opciones para '{paso.get('nombre')}'.")
+                            
+                            elif isinstance(first_item, str):
+                                paso['data'] = lista_de_opciones
+                                paso['data_key'] = lista_de_opciones 
+                                print(f"Éxito (Strings): Se obtuvieron {len(lista_de_opciones)} opciones para '{paso.get('nombre')}'.")
+
+                            else:
+                                paso['sin_datos'] = True
+                                print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió una lista con formato inesperado.")
+
+                            paso['sin_datos'] = False if paso.get('data') else True
+                        else:
+                            paso['sin_datos'] = True
+                            print(f"Advertencia: La API para '{paso.get('nombre')}' no devolvió una lista válida o la lista estaba vacía.", flush=True)
+                    
+                    elif response.status_code == 300:
+                        paso['sin_datos'] = True
+                        print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió el código 300, indicando que no hay datos disponibles.", flush=True)
+
+                    else:
+                        paso['sin_datos'] = True
+                        print(f"!!! ERROR: La API para '{paso.get('nombre')}' devolvió un código de estado inesperado: {response.status_code}. !!!", flush=True)
+                
+                except requests.RequestException as e:
+                    print(f"!!! ERROR DE CONEXIÓN a API Externa para '{paso.get('nombre')}': {str(e)} !!!", flush=True)
+                    paso['sin_datos'] = True
+                
+                if paso.get('sin_datos'):
+                    paso['data'] = []
+                    paso['data_key'] = []
+
+    return pasos_config
+
+
+def map_value_to_key(paso_config, friendly_value):
+    """
+    Mapea un valor amigable para el usuario (ej. nombre de un doctor) a su clave
+    legible por máquina (ej. un ID) usando la lista 'data_key' almacenada
+    durante la llamada a la API.
+    """
+    if not paso_config.get('data_key') or not isinstance(paso_config.get('data_key'), list):
+        return friendly_value 
+
+    key_field = paso_config.get('key')       
+    value_field = paso_config.get('valor')   
+
+    if not key_field or not value_field:
+        return friendly_value
+
+    for item in paso_config['data_key']:
+        if isinstance(item, dict) and str(item.get(value_field)).strip() == str(friendly_value).strip():
+            return item.get(key_field)
+            
+    return friendly_value
+
+
+def reversar_paso_en_estado(estado: Dict[str, Any], pasos_ordenados: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Encuentra la última variable requerida con valor en el estado y la establece a None.
+    """
+    pasos_requeridos = [p['variable_salida'] for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida')]
+    
+    for variable in reversed(pasos_requeridos):
+        if estado.get(variable) is not None and estado.get(variable) != '':
+            print(f"--- Revirtiendo paso: Se limpiará la variable '{variable}' ---", flush=True)
+            estado[variable] = None
+            break
+            
+    return estado
+
+
+@app.route('/api/orquestador_gpt', methods=['POST'])
+def orquestar_chat():
+    try:
+        print("\n\n**************************************************", flush=True)
+        print("****** NUEVA PETICIÓN A /api/orquestador_gpt ******", flush=True)
+        print("**************************************************", flush=True)
+        print("\n--- DATOS CRUDOS RECIBIDOS DE LARAVEL ---", flush=True)
+        print(json.dumps(request.json, indent=2, ensure_ascii=False), flush=True)
+        req_data = ChatRequest(**request.json)
+    except Exception as e:
+        return jsonify({"error": f"Formato de petición inválido: {str(e)}"}), 400
+
+
+    PLANTILLA_PROMPT_BASE = """
+    Eres un asistente de agendamiento de citas médicas para una clínica. Tu comunicación debe ser amigable, clara y eficiente.
+
+    ---
+    **Contexto de la Tarea:**
+    Tu tarea principal es formular una pregunta clara al usuario para ayudarle a completar el paso actual del agendamiento. El sistema (el código de Python) ya ha procesado la respuesta anterior del usuario y ha determinado cuál es el siguiente paso necesario, que se te indica en 'TAREA ACTUAL'.
+
+    **Reglas de Comportamiento:**
+    1.  **Formular la Pregunta:** Tu principal objetivo es formular la pregunta para la `TAREA ACTUAL`. Si se proporcionan `Datos disponibles` (como una lista de opciones), DEBES incluir esas opciones en tu mensaje de forma clara y numerada, usando `<br>` para separar cada opción.
+    2.  **Flexibilidad en la Respuesta:** El usuario puede responder con el número de la opción o con el texto. Tu pregunta debe invitar a ambas posibilidades (ej. "Puedes responder con el número o el nombre de la especialidad").
+    3.  **Manejo de Preguntas del Usuario:** Si el `mensaje_usuario` (que casi siempre estará vacío) contiene una pregunta directa sobre la tarea (ej. '¿qué doctores hay?'), responde la pregunta usando los `Datos disponibles` y luego vuelve a pedirle que elija una opción.
+    4.  **No Confirmar en Exceso:** Evita pedir confirmación para respuestas claras (ej. si el usuario elige "1", no preguntes "¿Confirmas que quieres la opción 1?"). El sistema se encargará de validar y avanzar.
+    5.  **Acción de Retroceso:** Si, basándote en la conversación, detectas que el usuario quiere explícitamente retroceder o cambiar una respuesta anterior, tu `accion` en el JSON de salida DEBE ser `reversar_paso`.
+    6.  **Manejo de Ambigüedad:** Si la respuesta del usuario es ambigua (por ejemplo, 'oftalmologo' cuando en la lista de `Datos disponibles` hay varias especialidades de oftalmología), NO avances. Tu `mensaje` debe ser una pregunta de clarificación, listando las opciones que coinciden y pidiendo al usuario que aclare su elección.
+    7.  **Errores de Disponibilidad:** Si una selección anterior del usuario resulta en que no hay `Datos disponibles` para la `TAREA ACTUAL`, debes explicarlo amablemente. Por ejemplo: "Parece que no hay doctores disponibles para la especialidad que seleccionaste. Por favor, elige una especialidad diferente de la lista.".
+ 
+    **TAREA ACTUAL:**
+    Tu única tarea es formular la pregunta para el paso: **'{nombre_tarea_actual}'**.
+
+    **Estado actual de la conversación (información ya recolectada):**
+    {estado_json}
+
+    **Datos disponibles para el paso '{nombre_tarea_actual}' (si los hay):**
+    {datos_json}
+
+    **Mensaje del usuario (generalmente vacío, úsalo solo si es una pregunta directa):**
+    "{mensaje_usuario}"
+    ---
+    **FORMATO DE RESPUESTA OBLIGATORIO (JSON VÁLIDO):**
+    {{
+        "mensaje": "<Tu respuesta conversacional y unificada aquí>",
+        "accion": "<'reversar_paso' o 'indefinida' aquí>",
+        "estado": {estado_json}
+    }}
+    """
+    db_connection = None
+    try:
+        db_generator = get_db_session()
+        db_connection = next(db_generator)
+        cursor = db_connection.cursor(dictionary=True)
+        
+        cursor.execute("SELECT orq_contexto, orq_reglas, orq_respuestas FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
+        flujo_config = cursor.fetchone()
+        
+        sql_query = """
+            SELECT adev.nombre, adev.tipo, adev.order, adev.variable_salida, adev.data, adev.required,
+                   adev.url, adev.method, adev.parametros_requeridos, adev.lista, adev.valor, adev.key,
+                   av.default_value AS default_value
+            FROM auto_detalle_estado_variable AS adev
+            LEFT JOIN auto_variables AS av ON adev.variable_id = av.id
+            WHERE adev.auto_detalle_id = %s
+        """
+        cursor.execute(sql_query, (req_data.flujo_id,))
+        pasos_config = cursor.fetchall()
+        
+        if not flujo_config:
+            return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
+
+        estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
+        estado_actual = estado_base.copy()
+        estado_actual.update(req_data.estado_actual)
+        
+        pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
+        pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
+
+        palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
+        if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
+            print("--- Intención de retroceso detectada por el usuario ---", flush=True)
+            estado_revertido = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+            req_data.mensaje_usuario = "" 
+            estado_actual = estado_revertido
+
+        accion_actual_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+
+        if accion_actual_config and req_data.mensaje_usuario:
+            variable_a_llenar = accion_actual_config.get('variable_salida')
+            valor_usuario = req_data.mensaje_usuario.strip()
+            tipo_paso = accion_actual_config.get('tipo')
+            valor_procesado = None
+
+            if tipo_paso in ['MULTIPLE', 'API']:
+                opciones_paso_actual = accion_actual_config.get('data', []) or []
+                if isinstance(opciones_paso_actual, str) and opciones_paso_actual:
+                    opciones_paso_actual = [item.strip() for item in opciones_paso_actual.split(';')]
+
+                coincidencias = []
+                valor_usuario_lower = valor_usuario.lower()
+
+                if valor_usuario.isdigit():
+                    try:
+                        indice = int(valor_usuario) - 1
+                        if 0 <= indice < len(opciones_paso_actual):
+                            coincidencias.append(opciones_paso_actual[indice])
+                    except (ValueError, IndexError):
+                        pass
+
+                if not coincidencias and opciones_paso_actual:
+                    for opcion in opciones_paso_actual:
+                        if valor_usuario_lower in opcion.lower():
+                            coincidencias.append(opcion)
+
+                if len(coincidencias) == 1:
+                    valor_procesado = coincidencias[0]
+                elif len(coincidencias) > 1:
+                    print(f"--- Respuesta ambigua detectada para '{valor_usuario}'. Coincidencias: {coincidencias} ---", flush=True)
+                    opciones_html = "<br>".join([f"- {opt}" for opt in coincidencias])
+                    mensaje_ambiguo = f"Tu respuesta coincide con varias opciones. Por favor, sé más específico. ¿A cuál te refieres?<br>{opciones_html}"
+                    return jsonify({ "mensaje_bot": mensaje_ambiguo, "accion": "pedir_clarificacion", "nuevo_estado": req_data.estado_actual })
+                else:
+                    valor_procesado = None
+
+            else:
+                valor_procesado = valor_usuario
+
+            if valor_procesado:
+                valor_mapeado = map_value_to_key(accion_actual_config, valor_procesado)
+                estado_actual[variable_a_llenar] = valor_mapeado
+            else:
+                print(f"--- No se pudo procesar la entrada '{valor_usuario}' para el paso '{accion_actual_config.get('nombre')}' ---", flush=True)
+                estado_actual[variable_a_llenar] = None
+        pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
+        pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
+
+        accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+
+        if not accion_siguiente_config:
+            return jsonify({
+                "mensaje_bot": "¡Gracias! Hemos completado todos los pasos.",
+                "nuevo_estado": estado_actual,
+                "accion": "finalizado"
+            })
+
+        datos_para_siguiente_accion = accion_siguiente_config.get('data', [])
+        if isinstance(datos_para_siguiente_accion, str) and datos_para_siguiente_accion:
+            datos_para_siguiente_accion = [item.strip() for item in datos_para_siguiente_accion.split(';')]
+
+        # Este bloque reemplaza al anterior que usaba FRIENDLY_NAMES
+        if accion_siguiente_config and accion_siguiente_config.get('tipo') in ['API', 'MULTIPLE'] and accion_siguiente_config.get('sin_datos'):
+            print(f"--- DETECTADO: No hay datos para el paso '{accion_siguiente_config.get('nombre')}'. Revirtiendo y generando mensaje con LLM. ---", flush=True)
+            
+            # 1. Revertir el estado para volver al paso anterior
+            estado_revertido = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+            
+            # 2. Identificar el paso anterior (al que volvemos) y el paso que falló
+            paso_fallido_nombre = accion_siguiente_config.get('nombre', 'el siguiente paso')
+            paso_revertido_config = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_revertido.get(p.get('variable_salida'))), None)
+            
+            if not paso_revertido_config:
+                # Fallback de seguridad si algo sale mal
+                return jsonify({ "mensaje_bot": "Lo siento, ocurrió un error y no podemos continuar. Por favor, intenta de nuevo.", "accion": "finalizado", "nuevo_estado": estado_revertido })
+
+            paso_anterior_nombre = paso_revertido_config.get('nombre', 'el paso anterior')
+            opciones_paso_anterior = paso_revertido_config.get('data', []) or []
+            
+            # La lógica para convertir string a lista se mantiene por compatibilidad
+            if isinstance(opciones_paso_anterior, str) and opciones_paso_anterior:
+                opciones_paso_anterior = [item.strip() for item in opciones_paso_anterior.split(';')]
+
+            # 3. Construir el prompt para que la IA genere el mensaje de error dinámicamente
+            opciones_texto_para_prompt = "\n".join([f"- {opt}" for opt in opciones_paso_anterior])
+
+            error_generation_prompt = f"""
+            Eres un asistente virtual que ayuda a agendar citas de manera amigable.
+            
+            Contexto: El usuario intentó avanzar, pero su elección anterior resultó en que no hay opciones disponibles para el siguiente paso. Debes explicarle esto y pedirle que elija de nuevo.
+
+            - El paso que el usuario debe reintentar es: '{paso_anterior_nombre}'
+            - El paso que no tuvo opciones disponibles fue: '{paso_fallido_nombre}'
+
+            Tarea:
+            1. Escribe un mensaje amable y claro para el usuario. Explica que no se encontraron resultados para "{paso_fallido_nombre}" con su selección previa. Usa un lenguaje natural, no técnico (por ejemplo, en lugar de "consultar_doctor", di "doctores disponibles").
+            2. Pídele que por favor intente con una opción diferente de la lista para "{paso_anterior_nombre}".
+            3. Muestra la siguiente lista de opciones disponibles de forma clara.
+
+            Opciones disponibles para '{paso_anterior_nombre}':
+            {opciones_texto_para_prompt}
+
+            Responde únicamente con el mensaje final para el usuario, usando saltos de línea `<br>` para formatear la lista de opciones.
+            """
+
+            # 4. Llamar a la IA para generar el mensaje
+            try:
+                response_openai = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": error_generation_prompt}],
+                    temperature=0.3
+                )
+                mensaje_final_dinamico = response_openai.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"Error llamando a LLM para generar mensaje de error: {e}", flush=True)
+                mensaje_final_dinamico = "Lo siento, parece que no hay opciones disponibles para tu selección. Por favor, intenta de nuevo."
+
+            # 5. Devolver la respuesta generada por la IA
+            return jsonify({
+                "mensaje_bot": mensaje_final_dinamico,
+                "accion": "reversar_paso",
+                "nuevo_estado": estado_revertido
+            })
+
+
+        prompt_para_siguiente_pregunta = PLANTILLA_PROMPT_BASE.format(
+            nombre_tarea_actual=accion_siguiente_config.get('nombre', 'N/A'),
+            estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
+            datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
+            mensaje_usuario="",
+            variable_salida_actual=accion_siguiente_config.get('variable_salida', '')
+        )
+
+        response_openai = client.chat.completions.create(
+            model="gpt-4.1-2025-04-14",
+            messages=[{"role": "user", "content": prompt_para_siguiente_pregunta}],
+            response_format={"type": "json_object"},
+            temperature=0.3
+        )
+        gpt_output = json.loads(response_openai.choices[0].message.content)
+
+        final_response = ChatResponse(
+            mensaje_bot=gpt_output.get("mensaje"),
+            nuevo_estado=estado_actual,
+            accion=gpt_output.get("accion", "indefinida")
+        )
+        
+        print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+        print(json.dumps(final_response.model_dump(), indent=2, ensure_ascii=False), flush=True)
+        print("**************************************************", flush=True)
+
+        return jsonify(final_response.model_dump())
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Ocurrió un error inesperado: {str(e)}"}), 500
+    finally:
+        if db_connection and db_connection.is_connected():
+            cursor.close()
+            db_connection.close()
+
 ###############
 # ip and port #
 ###############
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5010, debug=True)
+    app.run(host='0.0.0.0', port=5015, debug=True)
     

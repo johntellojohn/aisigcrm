@@ -3,7 +3,7 @@ services:
     build:
       context: .
     ports:
-      - "5010:5010"
+      - "5015:5015"
     volumes:
       - .:/app
     environment:
@@ -11,3 +11,4 @@ services:
       - FLASK_DEBUG=1
     env_file:
       - .env
+    restart: always

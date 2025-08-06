@@ -1489,9 +1489,9 @@ def upload_pdf_chat():
 
 load_dotenv()
 DB_HOST = os.getenv("DB_HOST")
-DB_USER = os.getenv("DB_USER")
+DB_USERNAME = os.getenv("DB_USERNAME")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_DATABASE = os.getenv("DB_DATABASE")
+DB_DATABASE_FALLBACK = os.getenv("DB_DATABASE")
 
 
 # --- Prompts ---
@@ -1560,7 +1560,7 @@ def execute_mysql_query(sql_query):
     try:
         conn = mysql.connector.connect(
             host=DB_HOST,
-            user=DB_USER,
+            user=DB_USERNAME,
             password=DB_PASSWORD,
             database=DB_DATABASE
         )
@@ -1812,17 +1812,28 @@ class ChatResponse(BaseModel):
     mensaje_bot: str
     nuevo_estado: dict
 
-def get_db_session():
-    """Provides a database connection context."""
-    db = None 
+def get_db_session(database_name=None):
+    """Proporciona una conexión a la base de datos.
+    Se conecta a 'database_name' si se especifica, si no, usa el valor de respaldo del .env."""
+    db = None
+    final_db_name = database_name if database_name else DB_DATABASE_FALLBACK
+    
+    if not final_db_name:
+        print("--- ERROR: No se ha especificado un nombre de base de datos para la conexión. ---", flush=True)
+        raise ValueError("Nombre de base de datos no especificado.")
+
     try:
+        print(f"--- Intentando conectar a la base de datos: {final_db_name} ---", flush=True)
         db = mysql.connector.connect(
             host=DB_HOST,
-            user=DB_USER,
+            user=DB_USERNAME,
             password=DB_PASSWORD,
-            database=DB_DATABASE
+            database=final_db_name 
         )
         yield db
+    except mysql.connector.Error as err:
+        print(f"Error de conexión a la base de datos '{final_db_name}': {err}", flush=True)
+        raise
     finally:
         if db and db.is_connected():
             db.close()
@@ -2012,7 +2023,9 @@ def orquestar_chat():
     """
     db_connection = None
     try:
-        db_generator = get_db_session()
+        db_name_from_request = request.json.get('db_name')
+        db_generator = get_db_session(database_name=db_name_from_request)
+
         db_connection = next(db_generator)
         cursor = db_connection.cursor(dictionary=True)
         

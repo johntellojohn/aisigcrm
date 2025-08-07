@@ -925,7 +925,7 @@ def upsert_file():
                             try:
                                 base_image_from_pdf = pdf_doc_for_check.extract_image(img_xref_from_data)
                                 image_bytes_for_processing_now = base_image_from_pdf["image"]
-                                print(f"Procesando Imagen {display_img_index_num} de la Página {display_page_number}...", flush=True)
+                                #print(f"Procesando Imagen {display_img_index_num} de la Página {display_page_number}...", flush=True)
                                 ai_description_from_openai = get_image_description_openai(image_bytes_for_processing_now, max_tokens=70)
                                 ocr_text_from_image_tess = extract_text_from_image_tesseract(image_bytes_for_processing_now)
                                 image_summary_text_block = (
@@ -2031,9 +2031,11 @@ def orquestar_chat():
     """
     db_connection = None
     try:
-        db_name_from_request = request.json.get('db_name')
-        db_generator = get_db_session(database_name=db_name_from_request)
+        db_name_from_laravel = request.json.get('db_name')
+        if not db_name_from_laravel:
+            raise ValueError("El parámetro 'db_name' es requerido en la petición desde Laravel.")
 
+        db_generator = get_db_session(database_name=db_name_from_laravel)
         db_connection = next(db_generator)
         cursor = db_connection.cursor(dictionary=True)
         

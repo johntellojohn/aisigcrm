@@ -2063,6 +2063,15 @@ def orquestar_chat():
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
 
+        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+
+        if paso_pendiente and req_data.mensaje_usuario:
+            variable_a_llenar = paso_pendiente.get('variable_salida')
+            if variable_a_llenar:
+                valor_mapeado = map_value_to_key(paso_pendiente, req_data.mensaje_usuario.strip())
+                estado_actual[variable_a_llenar] = valor_mapeado
+                print(f"--- Mensaje de usuario procesado. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
+        
         palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
         if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
             print("--- Intención de retroceso detectada por el usuario ---", flush=True)

@@ -38,6 +38,8 @@ from dotenv import load_dotenv
 import mysql.connector
 from pydantic import BaseModel
 from typing import Dict, Any, List
+from dateutil.parser import parse
+from datetime import time
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -1980,12 +1982,69 @@ def reversar_paso_en_estado(estado: Dict[str, Any], pasos_ordenados: List[Dict[s
             
     return estado
 
+def es_paso_de_fecha_hora(opciones: list) -> bool:
+    """
+    Detecta si una lista de opciones corresponde a fechas o rangos de tiempo.
+    """
+    if not opciones:
+        return False
+    
+    primera_opcion = str(opciones[0])
+    patron_fecha = r'^\d{4}-\d{2}-\d{2}$'
+    patron_hora = r'^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$'
+    
+    if re.match(patron_fecha, primera_opcion) or re.match(patron_hora, primera_opcion):
+        print(f"--- Detectado paso de fecha/hora. Opciones: {opciones[:2]}... ---", flush=True)
+        return True
+        
+    return False
+
+def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
+    """
+    Interpreta texto de fecha/hora del usuario y lo compara con una lista de opciones.
+    """
+    meses_es = {
+        'enero': 'january', 'febrero': 'february', 'marzo': 'march', 'abril': 'april',
+        'mayo': 'may', 'junio': 'june', 'julio': 'july', 'agosto': 'august',
+        'septiembre': 'september', 'octubre': 'october', 'noviembre': 'november', 'diciembre': 'december'
+    }
+
+    mensaje_procesado = mensaje_usuario.lower()
+    for es, en in meses_es.items():
+        mensaje_procesado = mensaje_procesado.replace(es, en)
+
+    try:
+        dt_usuario = parse(mensaje_procesado, fuzzy=True)
+    except (ValueError, TypeError):
+        return NotImplemented
+
+    for opcion in opciones:
+        try:
+            dt_opcion = parse(opcion)
+            if dt_opcion.date() == dt_usuario.date():
+                return opcion
+            continue
+        except ValueError:
+            pass
+
+        try:
+            partes = opcion.replace(" ", "").split('-')
+            if len(partes) == 2:
+                hora_inicio = parse(partes[0]).time()
+                hora_fin = parse(partes[1]).time()
+                hora_usuario = dt_usuario.time()
+                if hora_inicio <= hora_usuario <= hora_fin:
+                    return opcion
+        except ValueError:
+            pass
+            
+    return None
 
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
     try:
         print("\n\n**************************************************", flush=True)
-        print("****** NUEVA PETICIÓN A /api/orquestador_gpt ******", flush=True)
+        print(" NUEVA PETICIÓN A /api/orquestador_gpt ", flush=True)
         print("**************************************************", flush=True)
         print("\n--- DATOS CRUDOS RECIBIDOS DE LARAVEL ---", flush=True)
         print(json.dumps(request.json, indent=2, ensure_ascii=False), flush=True)
@@ -2066,67 +2125,66 @@ def orquestar_chat():
         paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
         if paso_pendiente and req_data.mensaje_usuario:
-            variable_a_llenar = paso_pendiente.get('variable_salida')
-            if variable_a_llenar:
-                valor_mapeado = map_value_to_key(paso_pendiente, req_data.mensaje_usuario.strip())
-                estado_actual[variable_a_llenar] = valor_mapeado
-                print(f"--- Mensaje de usuario procesado. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
-        
-        palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
-        if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
-            print("--- Intención de retroceso detectada por el usuario ---", flush=True)
-            estado_revertido = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-            req_data.mensaje_usuario = "" 
-            estado_actual = estado_revertido
+            
+            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
+            if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
+                print("--- Intención de retroceso detectada por el usuario ---", flush=True)
+                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                req_data.mensaje_usuario = "" 
+            
+            if req_data.mensaje_usuario:
+                variable_a_llenar = paso_pendiente.get('variable_salida')
+                valor_usuario = req_data.mensaje_usuario.strip()
+                tipo_paso = paso_pendiente.get('tipo')
+                valor_procesado = None
+                
+                if tipo_paso == 'TEXT':
+                    valor_procesado = valor_usuario
+                
+                elif tipo_paso in ['MULTIPLE', 'API']:
+                    opciones_paso_actual = paso_pendiente.get('data', []) or []
+                    if isinstance(opciones_paso_actual, str) and opciones_paso_actual:
+                        opciones_paso_actual = [item.strip() for item in opciones_paso_actual.split(';')]
 
-        accion_actual_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+                    es_fecha_o_hora = es_paso_de_fecha_hora(opciones_paso_actual)
+                    coincidencias = []
+                    
+                    if valor_usuario.isdigit():
+                        try:
+                            indice = int(valor_usuario) - 1
+                            if 0 <= indice < len(opciones_paso_actual):
+                                coincidencias.append(opciones_paso_actual[indice])
+                        except (ValueError, IndexError): pass
 
-        if accion_actual_config and req_data.mensaje_usuario:
-            variable_a_llenar = accion_actual_config.get('variable_salida')
-            valor_usuario = req_data.mensaje_usuario.strip()
-            tipo_paso = accion_actual_config.get('tipo')
-            valor_procesado = None
+                    if not coincidencias:
+                        if es_fecha_o_hora:
+                            print("--- Usando el traductor de fechas/horas... ---", flush=True)
+                            mejor_opcion = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
+                            if mejor_opcion:
+                                coincidencias.append(mejor_opcion)
+                        else:
+                            print("--- Usando la búsqueda de texto simple... ---", flush=True)
+                            valor_usuario_lower = valor_usuario.lower()
+                            for opcion in opciones_paso_actual:
+                                if valor_usuario_lower in opcion.lower():
+                                    coincidencias.append(opcion)
 
-            if tipo_paso in ['MULTIPLE', 'API']:
-                opciones_paso_actual = accion_actual_config.get('data', []) or []
-                if isinstance(opciones_paso_actual, str) and opciones_paso_actual:
-                    opciones_paso_actual = [item.strip() for item in opciones_paso_actual.split(';')]
+                    if len(coincidencias) == 1:
+                        valor_procesado = coincidencias[0]
+                    elif len(coincidencias) > 1:
+                        print(f"--- Respuesta ambigua detectada... ---", flush=True)
+                        opciones_html = "<br>".join([f"- {opt}" for opt in coincidencias])
+                        mensaje_ambiguo = f"Tu respuesta coincide con varias opciones. Por favor, sé más específico. ¿A cuál te refieres?<br>{opciones_html}"
+                        return jsonify({ "mensaje_bot": mensaje_ambiguo, "accion": "pedir_clarificacion", "nuevo_estado": req_data.estado_actual })
 
-                coincidencias = []
-                valor_usuario_lower = valor_usuario.lower()
-
-                if valor_usuario.isdigit():
-                    try:
-                        indice = int(valor_usuario) - 1
-                        if 0 <= indice < len(opciones_paso_actual):
-                            coincidencias.append(opciones_paso_actual[indice])
-                    except (ValueError, IndexError):
-                        pass
-
-                if not coincidencias and opciones_paso_actual:
-                    for opcion in opciones_paso_actual:
-                        if valor_usuario_lower in opcion.lower():
-                            coincidencias.append(opcion)
-
-                if len(coincidencias) == 1:
-                    valor_procesado = coincidencias[0]
-                elif len(coincidencias) > 1:
-                    print(f"--- Respuesta ambigua detectada para '{valor_usuario}'. Coincidencias: {coincidencias} ---", flush=True)
-                    opciones_html = "<br>".join([f"- {opt}" for opt in coincidencias])
-                    mensaje_ambiguo = f"Tu respuesta coincide con varias opciones. Por favor, sé más específico. ¿A cuál te refieres?<br>{opciones_html}"
-                    return jsonify({ "mensaje_bot": mensaje_ambiguo, "accion": "pedir_clarificacion", "nuevo_estado": req_data.estado_actual })
+                if valor_procesado:
+                    valor_mapeado = map_value_to_key(paso_pendiente, valor_procesado)
+                    estado_actual[variable_a_llenar] = valor_mapeado
+                    print(f"--- Mensaje de usuario procesado. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
                 else:
-                    valor_procesado = None
+                    print(f"--- No se pudo procesar la entrada '{valor_usuario}' para el paso '{paso_pendiente.get('nombre')}' ---", flush=True)
 
-            else:
-                valor_procesado = valor_usuario
-
-            if valor_procesado:
-                valor_mapeado = map_value_to_key(accion_actual_config, valor_procesado)
-                estado_actual[variable_a_llenar] = valor_mapeado
-            else:
-                print(f"--- No se pudo procesar la entrada '{valor_usuario}' para el paso '{accion_actual_config.get('nombre')}' ---", flush=True)
-                estado_actual[variable_a_llenar] = None
+                    
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
 
@@ -2134,99 +2192,50 @@ def orquestar_chat():
 
         if not accion_siguiente_config:
             return jsonify({
-                "mensaje_bot": "¡Gracias! Hemos completado todos los pasos.",
+                "mensaje_bot": "¡Gracias! Hemos completado todos los pasos. Tu cita está siendo procesada.",
                 "nuevo_estado": estado_actual,
                 "accion": "finalizado"
             })
+
+        mensaje_error_contextual = ""
+        if accion_siguiente_config.get('sin_datos'):
+            print(f"--- DETECTADO: No hay datos para el paso '{accion_siguiente_config.get('nombre')}'. Revirtiendo. ---", flush=True)
+            estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+            paso_fallido_nombre = accion_siguiente_config.get('nombre', 'el paso anterior')
+            
+            accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+            
+            if not accion_siguiente_config:
+                 return jsonify({ "mensaje_bot": "Lo siento, ocurrió un error y no podemos continuar.", "accion": "finalizado", "nuevo_estado": estado_actual })
+
+            mensaje_error_contextual = f"Contexto Adicional Importante: La elección anterior del usuario para '{paso_fallido_nombre}' no produjo resultados. Debes informarle de esto amablemente ANTES de volver a formular la pregunta para la TAREA ACTUAL."
 
         datos_para_siguiente_accion = accion_siguiente_config.get('data', [])
         if isinstance(datos_para_siguiente_accion, str) and datos_para_siguiente_accion:
             datos_para_siguiente_accion = [item.strip() for item in datos_para_siguiente_accion.split(';')]
 
-        # Este bloque reemplaza al anterior que usaba FRIENDLY_NAMES
-        if accion_siguiente_config and accion_siguiente_config.get('tipo') in ['API', 'MULTIPLE'] and accion_siguiente_config.get('sin_datos'):
-            print(f"--- DETECTADO: No hay datos para el paso '{accion_siguiente_config.get('nombre')}'. Revirtiendo y generando mensaje con LLM. ---", flush=True)
-            
-            # 1. Revertir el estado para volver al paso anterior
-            estado_revertido = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-            
-            # 2. Identificar el paso anterior (al que volvemos) y el paso que falló
-            paso_fallido_nombre = accion_siguiente_config.get('nombre', 'el siguiente paso')
-            paso_revertido_config = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_revertido.get(p.get('variable_salida'))), None)
-            
-            if not paso_revertido_config:
-                # Fallback de seguridad si algo sale mal
-                return jsonify({ "mensaje_bot": "Lo siento, ocurrió un error y no podemos continuar. Por favor, intenta de nuevo.", "accion": "finalizado", "nuevo_estado": estado_revertido })
-
-            paso_anterior_nombre = paso_revertido_config.get('nombre', 'el paso anterior')
-            opciones_paso_anterior = paso_revertido_config.get('data', []) or []
-            
-            # La lógica para convertir string a lista se mantiene por compatibilidad
-            if isinstance(opciones_paso_anterior, str) and opciones_paso_anterior:
-                opciones_paso_anterior = [item.strip() for item in opciones_paso_anterior.split(';')]
-
-            # 3. Construir el prompt para que la IA genere el mensaje de error dinámicamente
-            opciones_texto_para_prompt = "\n".join([f"- {opt}" for opt in opciones_paso_anterior])
-
-            error_generation_prompt = f"""
-            Eres un asistente virtual que ayuda a agendar citas de manera amigable.
-            
-            Contexto: El usuario intentó avanzar, pero su elección anterior resultó en que no hay opciones disponibles para el siguiente paso. Debes explicarle esto y pedirle que elija de nuevo.
-
-            - El paso que el usuario debe reintentar es: '{paso_anterior_nombre}'
-            - El paso que no tuvo opciones disponibles fue: '{paso_fallido_nombre}'
-
-            Tarea:
-            1. Escribe un mensaje amable y claro para el usuario. Explica que no se encontraron resultados para "{paso_fallido_nombre}" con su selección previa. Usa un lenguaje natural, no técnico (por ejemplo, en lugar de "consultar_doctor", di "doctores disponibles").
-            2. Pídele que por favor intente con una opción diferente de la lista para "{paso_anterior_nombre}".
-            3. Muestra la siguiente lista de opciones disponibles de forma clara.
-
-            Opciones disponibles para '{paso_anterior_nombre}':
-            {opciones_texto_para_prompt}
-
-            Responde únicamente con el mensaje final para el usuario, usando saltos de línea `<br>` para formatear la lista de opciones.
-            """
-
-            # 4. Llamar a la IA para generar el mensaje
-            try:
-                response_openai = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": error_generation_prompt}],
-                    temperature=0.3
-                )
-                mensaje_final_dinamico = response_openai.choices[0].message.content.strip()
-            except Exception as e:
-                print(f"Error llamando a LLM para generar mensaje de error: {e}", flush=True)
-                mensaje_final_dinamico = "Lo siento, parece que no hay opciones disponibles para tu selección. Por favor, intenta de nuevo."
-
-            # 5. Devolver la respuesta generada por la IA
-            return jsonify({
-                "mensaje_bot": mensaje_final_dinamico,
-                "accion": "reversar_paso",
-                "nuevo_estado": estado_revertido
-            })
-
-
-        prompt_para_siguiente_pregunta = PLANTILLA_PROMPT_BASE.format(
+        prompt_final = PLANTILLA_PROMPT_BASE.format(
             nombre_tarea_actual=accion_siguiente_config.get('nombre', 'N/A'),
             estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
             datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
-            mensaje_usuario="",
+            mensaje_usuario=mensaje_error_contextual,
             variable_salida_actual=accion_siguiente_config.get('variable_salida', '')
         )
 
         response_openai = client.chat.completions.create(
-            model="gpt-4.1-2025-04-14",
-            messages=[{"role": "user", "content": prompt_para_siguiente_pregunta}],
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt_final}],
             response_format={"type": "json_object"},
             temperature=0.3
         )
         gpt_output = json.loads(response_openai.choices[0].message.content)
 
+        accion_final = "reversar_paso" if mensaje_error_contextual else gpt_output.get("accion", "indefinida")
+
         final_response = ChatResponse(
             mensaje_bot=gpt_output.get("mensaje"),
             nuevo_estado=estado_actual,
-            accion=gpt_output.get("accion", "indefinida")
+            accion=accion_final
         )
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)

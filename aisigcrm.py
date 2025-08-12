@@ -2054,12 +2054,13 @@ def orquestar_chat():
 
 
     PLANTILLA_PROMPT_BASE = """
-    Eres un asistente de agendamiento de citas médicas para una clínica. Tu comunicación debe ser amigable, clara y eficiente.
-
+    # CONTEXTO Y PERSONALIDAD (Dinámico desde la DB)
+    {orq_contexto}
+    Tono: {orq_tono}
     ---
-    **Contexto de la Tarea:**
-    Tu tarea principal es formular una pregunta clara al usuario para ayudarle a completar el paso actual del agendamiento. El sistema (el código de Python) ya ha procesado la respuesta anterior del usuario y ha determinado cuál es el siguiente paso necesario, que se te indica en 'TAREA ACTUAL'.
-
+    # REGLAS DE NEGOCIO (Dinámicas desde la DB)
+    {orq_reglas}
+    ---
     **Reglas de Comportamiento:**
     1.  **Formular la Pregunta:** Tu principal objetivo es formular la pregunta para la `TAREA ACTUAL`. Si se proporcionan `Datos disponibles` (como una lista de opciones), DEBES incluir esas opciones en tu mensaje de forma clara y numerada, usando `<br>` para separar cada opción.
     2.  **Flexibilidad en la Respuesta:** El usuario puede responder con el número de la opción o con el texto. Tu pregunta debe invitar a ambas posibilidades (ej. "Puedes responder con el número o el nombre de la especialidad").
@@ -2081,12 +2082,8 @@ def orquestar_chat():
     **Mensaje del usuario (generalmente vacío, úsalo solo si es una pregunta directa):**
     "{mensaje_usuario}"
     ---
-    **FORMATO DE RESPUESTA OBLIGATORIO (JSON VÁLIDO):**
-    {{
-        "mensaje": "<Tu respuesta conversacional y unificada aquí>",
-        "accion": "<'reversar_paso' o 'indefinida' aquí>",
-        "estado": {estado_json}
-    }}
+    # FORMATO DE RESPUESTA OBLIGATORIO (JSON VÁLIDO - Fijo en el código)
+    {orq_respuestas}
     """
     db_connection = None
     try:
@@ -2149,25 +2146,32 @@ def orquestar_chat():
                     es_fecha_o_hora = es_paso_de_fecha_hora(opciones_paso_actual)
                     coincidencias = []
                     
-                    if valor_usuario.isdigit():
-                        try:
-                            indice = int(valor_usuario) - 1
-                            if 0 <= indice < len(opciones_paso_actual):
-                                coincidencias.append(opciones_paso_actual[indice])
-                        except (ValueError, IndexError): pass
+                    if len(opciones_paso_actual) == 1:
+                        palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto']
+                        if valor_usuario.lower() in palabras_clave_afirmativas:
+                            print("--- Respuesta afirmativa detectada para una única opción. Seleccionando automáticamente. ---", flush=True)
+                            coincidencias.append(opciones_paso_actual[0])
 
                     if not coincidencias:
-                        if es_fecha_o_hora:
-                            print("--- Usando el traductor de fechas/horas... ---", flush=True)
-                            mejor_opcion = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
-                            if mejor_opcion:
-                                coincidencias.append(mejor_opcion)
-                        else:
-                            print("--- Usando la búsqueda de texto simple... ---", flush=True)
-                            valor_usuario_lower = valor_usuario.lower()
-                            for opcion in opciones_paso_actual:
-                                if valor_usuario_lower in opcion.lower():
-                                    coincidencias.append(opcion)
+                        if valor_usuario.isdigit():
+                            try:
+                                indice = int(valor_usuario) - 1
+                                if 0 <= indice < len(opciones_paso_actual):
+                                    coincidencias.append(opciones_paso_actual[indice])
+                            except (ValueError, IndexError): pass
+
+                        if not coincidencias:
+                            if es_fecha_o_hora:
+                                print("--- Usando el traductor de fechas/horas... ---", flush=True)
+                                mejor_opcion = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
+                                if mejor_opcion:
+                                    coincidencias.append(mejor_opcion)
+                            else:
+                                print("--- Usando la búsqueda de texto simple... ---", flush=True)
+                                valor_usuario_lower = valor_usuario.lower()
+                                for opcion in opciones_paso_actual:
+                                    if valor_usuario_lower in opcion.lower():
+                                        coincidencias.append(opcion)
 
                     if len(coincidencias) == 1:
                         valor_procesado = coincidencias[0]
@@ -2215,6 +2219,10 @@ def orquestar_chat():
             datos_para_siguiente_accion = [item.strip() for item in datos_para_siguiente_accion.split(';')]
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
+            orq_contexto=flujo_config.get('orq_contexto', 'Eres un asistente útil.'),
+            orq_tono=flujo_config.get('orq_tono', 'amable y en español'),
+            orq_reglas=flujo_config.get('orq_reglas', 'Sigue las instrucciones.'),
+            orq_respuestas=flujo_config.get('orq_respuestas', '{"mensaje": "", "accion": "indefinida", "estado": {}}'),
             nombre_tarea_actual=accion_siguiente_config.get('nombre', 'N/A'),
             estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
             datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),

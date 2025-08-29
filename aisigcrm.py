@@ -2132,7 +2132,7 @@ def orquestar_chat():
                     "accion": "finalizado_por_usuario"
                 })
             
-            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
+            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar', 'regresarme', 'retroceder', 'cambiar respuesta', 'cambiar mi respuesta', 'cambiar selección', 'cambiar de opción']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 print("--- Intención de retroceso detectada por el usuario ---", flush=True)
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)

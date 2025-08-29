@@ -2122,6 +2122,15 @@ def orquestar_chat():
         paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
         if paso_pendiente and req_data.mensaje_usuario:
+
+            palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'chao', 'ya no', 'no gracias']
+            if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
+                print("--- Intención de finalizar detectada por el usuario ---", flush=True)
+                return jsonify({
+                    "mensaje_bot": "Entendido. He cancelado el proceso. Si necesitas algo más, no dudes en escribirme. ¡Que tengas un buen día!",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado_por_usuario"
+                })
             
             palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'anterior', 'regresar', 'retroceder', 'cambiar respuesta', 'cambiar selección', 'cambiar opción']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):

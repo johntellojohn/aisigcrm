@@ -1900,7 +1900,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
 
                     if response.status_code == 200:
                         api_data = response.json()
-                        paso['sin_datos'] = True
+                        paso['sin_datos'] = True 
 
                         if paso.get('lista'):
                             print(f"--- Paso '{paso.get('nombre')}' espera una lista. Procesando... ---", flush=True)
@@ -1918,28 +1918,48 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                                 lista_de_opciones = temp_data
                             
                             if isinstance(lista_de_opciones, list) and lista_de_opciones:
-                                if isinstance(lista_de_opciones[0], dict):
-                                    paso['data'] = [str(item.get(paso['valor'])) for item in lista_de_opciones]
+                                first_item = lista_de_opciones[0]
+                                if isinstance(first_item, dict):
+                                    paso['data'] = [str(item.get(paso['valor'])) for item in lista_de_opciones if isinstance(item, dict) and paso.get('valor') in item]
                                     paso['data_key'] = lista_de_opciones
-                                else:
+                                    print(f"Éxito (Objetos): Se obtuvieron {len(paso['data'])} opciones para '{paso.get('nombre')}'.")
+                                elif isinstance(first_item, str):
                                     paso['data'] = lista_de_opciones
                                     paso['data_key'] = lista_de_opciones
-                                paso['sin_datos'] = False
+                                    print(f"Éxito (Strings): Se obtuvieron {len(paso['data'])} opciones para '{paso.get('nombre')}'.")
+                                else:
+                                    paso['sin_datos'] = True
+                                    print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió una lista con formato inesperado.")
+                                
+                                paso['sin_datos'] = False if paso.get('data') else True
+                                if paso['sin_datos']:
+                                     paso['error_api'] = 'LISTA_VACIA'
                             else:
                                 paso['error_api'] = 'LISTA_VACIA'
+                                print(f"Advertencia: La API para '{paso.get('nombre')}' no devolvió una lista válida o la lista estaba vacía.", flush=True)
                         else:
                             print(f"--- Paso '{paso.get('nombre')}' no espera una lista. Procesando como objeto único. ---", flush=True)
                             respuesta_obj = api_data[0] if isinstance(api_data, list) and api_data else api_data
                             
-                            if isinstance(respuesta_obj, dict) and str(respuesta_obj.get('estado')) in ['200', '300']:
-                                paso['sin_datos'] = False
-                                output_variable = paso.get('variable_salida')
-                                if output_variable:
-                                    valor_a_guardar = str(respuesta_obj.get('existe_paciente', 'false')).upper()
-                                    estado_actual[output_variable] = valor_a_guardar
-                                    print(f"Éxito: Estado actualizado. '{output_variable}' = '{valor_a_guardar}'", flush=True)
+                            if isinstance(respuesta_obj, dict):
+                                if str(respuesta_obj.get('estado')) in ['200', '300']:
+                                    paso['sin_datos'] = False
+                                    output_variable = paso.get('variable_salida')
+                                    if output_variable:
+                                        campo_a_extraer = paso.get('valor')
+                                        if campo_a_extraer and campo_a_extraer in respuesta_obj:
+                                            valor_a_guardar = respuesta_obj.get(campo_a_extraer)
+                                            print(f"Éxito: Se extrajo el valor del campo '{campo_a_extraer}'.")
+                                        else:
+                                            valor_a_guardar = json.dumps(respuesta_obj)
+                                            print(f"Éxito: El campo 'valor' no está configurado. Se guardará la respuesta JSON completa.")
+                                        
+                                        estado_actual[output_variable] = str(valor_a_guardar).upper()
+                                        print(f"Estado actualizado. '{output_variable}' = '{str(valor_a_guardar).upper()}'", flush=True)
+                                else:
+                                    paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
                             else:
-                                paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
+                                paso['error_api'] = 'OBJETO_INVALIDO'
                     
                     elif response.status_code in [204, 300]:
                         paso['sin_datos'] = True
@@ -1952,6 +1972,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                     else:
                         paso['sin_datos'] = True
                         paso['error_api'] = 'ERROR_INESPERADO'
+                        print(f"!!! ERROR: La API para '{paso.get('nombre')}' devolvió un código de estado inesperado: {response.status_code}. !!!", flush=True)
                 
                 except requests.RequestException as e:
                     print(f"!!! ERROR DE CONEXIÓN a API Externa para '{paso.get('nombre')}': {str(e)} !!!", flush=True)

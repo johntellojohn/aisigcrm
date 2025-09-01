@@ -2069,7 +2069,8 @@ def orquestar_chat():
     5.  **Acción de Retroceso:** Si, basándote en la conversación, detectas que el usuario quiere explícitamente retroceder o cambiar una respuesta anterior, tu `accion` en el JSON de salida DEBE ser `reversar_paso`.
     6.  **Manejo de Ambigüedad:** Si la respuesta del usuario es ambigua (por ejemplo, 'oftalmologo' cuando en la lista de `Datos disponibles` hay varias especialidades de oftalmología), NO avances. Tu `mensaje` debe ser una pregunta de clarificación, listando las opciones que coinciden y pidiendo al usuario que aclare su elección.
     7.  **Errores de Disponibilidad:** Si una selección anterior del usuario resulta en que no hay `Datos disponibles` para la `TAREA ACTUAL`, debes explicarlo amablemente. Por ejemplo: "Parece que no hay doctores disponibles para la especialidad que seleccionaste. Por favor, elige una especialidad diferente de la lista.".
- 
+    8.  **Regla Crítica:** Si la sección `Datos disponibles` contiene una lista con opciones, DEBES OBLIGATORIAMENTE incluir esas opciones en tu mensaje. Deben estar numeradas de forma clara, usando `<br>` para separar cada una.
+
     **TAREA ACTUAL:**
     Tu única tarea es formular la pregunta para el paso: **'{nombre_tarea_actual}'**.
 
@@ -2176,11 +2177,12 @@ def orquestar_chat():
                                 if mejor_opcion:
                                     coincidencias.append(mejor_opcion)
                             else:
-                                print("--- Usando la búsqueda de texto simple... ---", flush=True)
-                                valor_usuario_lower = valor_usuario.lower()
+                                print("--- Usando la búsqueda de texto normalizado (sin tildes)... ---", flush=True)
+                                valor_usuario_normalizado = unidecode(valor_usuario.lower())
                                 for opcion in opciones_paso_actual:
-                                    if valor_usuario_lower in opcion.lower():
-                                        coincidencias.append(opcion)
+                                    opcion_normalizada = unidecode(opcion.lower())
+                                    if valor_usuario_normalizado in opcion_normalizada:
+                                        coincidencias.append(opcion) 
 
                     if len(coincidencias) == 1:
                         valor_procesado = coincidencias[0]

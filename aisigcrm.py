@@ -1849,7 +1849,7 @@ def get_db_session(database_name=None):
             db.close()
 
 def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Llama a las APIs externas y guarda el estado del resultado."""
+    """Llama a las APIs externas y guarda el estado del resultado, incluyendo errores específicos."""
     for paso in pasos_config:
         if paso.get('tipo') == 'API' and (not paso.get('data') or paso.get('sin_datos')):
             print(f"--- Verificando paso API: '{paso.get('nombre')}' ---", flush=True)
@@ -1867,6 +1867,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                         break
             
             if requisitos_completos:
+                paso['error_api'] = None
                 try:
                     if paso.get('nombre') == 'consulta_documento':
                         print("--- Aplicando mapeo de parámetros para consulta_documento ---", flush=True)
@@ -1886,21 +1887,20 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                     print(f"URL: {paso.get('url')}, Method: {method}", flush=True)
                     print(f"Payload: {json.dumps(payload)}", flush=True)
                     
-                    response_kwargs = {
-                        'method': method, 'url': paso['url'], 'headers': headers,
-                        'timeout': 60, 'verify': False
-                    }
-                    if method == 'GET':
-                        response_kwargs['params'] = payload
-                    else:
-                        response_kwargs['json'] = payload
+                    response = requests.request(
+                        method=method,
+                        url=paso['url'],
+                        json=payload,
+                        headers=headers,
+                        timeout=60,
+                        verify=False
+                    )
 
-                    response = requests.request(**response_kwargs)
                     print(f"Respuesta de API Externa: Código de Estado = {response.status_code}", flush=True)
 
                     if response.status_code == 200:
                         api_data = response.json()
-                        paso['sin_datos'] = True
+                        paso['sin_datos'] = True 
 
                         if paso.get('lista'):
                             print(f"--- Paso '{paso.get('nombre')}' espera una lista. Procesando... ---", flush=True)
@@ -1925,7 +1925,6 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                                     paso['data'] = lista_de_opciones
                                     paso['data_key'] = lista_de_opciones
                                 paso['sin_datos'] = False
-                                print(f"Éxito: Se obtuvieron {len(paso['data'])} opciones para '{paso.get('nombre')}'.")
                             else:
                                 paso['error_api'] = 'LISTA_VACIA'
                         else:
@@ -1942,18 +1941,26 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                             else:
                                 paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
                     
-                    elif response.status_code == 300:
+                    elif response.status_code in [204, 300]:
                         paso['sin_datos'] = True
-                        print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió el código 300, indicando que no hay datos disponibles.", flush=True)
+                        paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
+                    
+                    elif response.status_code == 500:
+                        paso['sin_datos'] = True
+                        paso['error_api'] = 'ERROR_SERVIDOR'
+                    
                     else:
                         paso['sin_datos'] = True
-                        print(f"!!! ERROR: La API para '{paso.get('nombre')}' devolvió un código de estado inesperado: {response.status_code}. !!!", flush=True)
+                        paso['error_api'] = 'ERROR_INESPERADO'
                 
                 except requests.RequestException as e:
                     print(f"!!! ERROR DE CONEXIÓN a API Externa para '{paso.get('nombre')}': {str(e)} !!!", flush=True)
                     paso['sin_datos'] = True
+                    paso['error_api'] = 'ERROR_CONEXION'
                 
                 if paso.get('sin_datos'):
+                    if not paso.get('error_api'):
+                        paso['error_api'] = 'LISTA_VACIA'
                     paso['data'] = []
                     paso['data_key'] = []
 

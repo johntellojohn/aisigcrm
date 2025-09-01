@@ -1900,7 +1900,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
 
                     if response.status_code == 200:
                         api_data = response.json()
-                        paso['sin_datos'] = True 
+                        paso['sin_datos'] = True
 
                         if paso.get('lista'):
                             print(f"--- Paso '{paso.get('nombre')}' espera una lista. Procesando... ---", flush=True)
@@ -1931,11 +1931,11 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                             print(f"--- Paso '{paso.get('nombre')}' no espera una lista. Procesando como objeto único. ---", flush=True)
                             respuesta_obj = api_data[0] if isinstance(api_data, list) and api_data else api_data
                             
-                            if isinstance(respuesta_obj, dict) and str(respuesta_obj.get('estado')) == '200':
+                            if isinstance(respuesta_obj, dict) and str(respuesta_obj.get('estado')) in ['200', '300']:
                                 paso['sin_datos'] = False
                                 output_variable = paso.get('variable_salida')
                                 if output_variable:
-                                    valor_a_guardar = respuesta_obj.get('existe_paciente', 'FALSE')
+                                    valor_a_guardar = str(respuesta_obj.get('existe_paciente', 'false')).upper()
                                     estado_actual[output_variable] = valor_a_guardar
                                     print(f"Éxito: Estado actualizado. '{output_variable}' = '{valor_a_guardar}'", flush=True)
                             else:

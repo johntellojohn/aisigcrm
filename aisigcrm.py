@@ -1849,7 +1849,7 @@ def get_db_session(database_name=None):
             db.close()
 
 def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Llama a las APIs externas para poblar las opciones de los pasos que lo requieran."""
+    """Llama a las APIs externas y guarda el estado del resultado."""
     for paso in pasos_config:
         if paso.get('tipo') == 'API' and (not paso.get('data') or paso.get('sin_datos')):
             print(f"--- Verificando paso API: '{paso.get('nombre')}' ---", flush=True)
@@ -1861,14 +1861,23 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                 print(f"Paso '{paso.get('nombre')}' no tiene parámetros requeridos. Se llamará a la API.", flush=True)
             else:
                 for param in params_requeridos:
-                    if estado_actual.get(param) is None or estado_actual.get(param) == '':
+                    if estado_actual.get(param) is None or str(estado_actual.get(param)).strip() == '':
                         print(f"Requisito '{param}' para el paso '{paso.get('nombre')}' no está en el estado actual. Saltando llamada API.", flush=True)
                         requisitos_completos = False
                         break
             
             if requisitos_completos:
                 try:
-                    payload = {param: estado_actual.get(param) for param in params_requeridos}
+                    if paso.get('nombre') == 'consulta_documento':
+                        print("--- Aplicando mapeo de parámetros para consulta_documento ---", flush=True)
+                        payload = {
+                            "company_id": estado_actual.get("company_id"),
+                            "identificacion": estado_actual.get("identificacion"),
+                            "tipo_documento": estado_actual.get("tipo_documento")
+                        }
+                    else:
+                        payload = {param: estado_actual.get(param) for param in params_requeridos}
+
                     method = paso.get('method', 'GET').upper()
                     headers = {'Content-Type': 'application/json'}
                     
@@ -1877,25 +1886,29 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                     print(f"URL: {paso.get('url')}, Method: {method}", flush=True)
                     print(f"Payload: {json.dumps(payload)}", flush=True)
                     
-                    response = requests.request(
-                        method=method,
-                        url=paso['url'],
-                        json=payload, 
-                        headers=headers,
-                        timeout=60,
-                        verify=False
-                    )
+                    response_kwargs = {
+                        'method': method, 'url': paso['url'], 'headers': headers,
+                        'timeout': 60, 'verify': False
+                    }
+                    if method == 'GET':
+                        response_kwargs['params'] = payload
+                    else:
+                        response_kwargs['json'] = payload
 
+                    response = requests.request(**response_kwargs)
                     print(f"Respuesta de API Externa: Código de Estado = {response.status_code}", flush=True)
 
                     if response.status_code == 200:
                         api_data = response.json()
-                        lista_de_opciones = None
+                        paso['sin_datos'] = True
+
                         if paso.get('lista'):
-                            keys = paso['lista'].split('.') 
+                            print(f"--- Paso '{paso.get('nombre')}' espera una lista. Procesando... ---", flush=True)
+                            lista_de_opciones = None
+                            keys = paso['lista'].split('.')
                             temp_data = api_data
                             is_valid = True
-                            for key in keys: 
+                            for key in keys:
                                 if isinstance(temp_data, dict) and key in temp_data:
                                     temp_data = temp_data[key]
                                 else:
@@ -1903,34 +1916,35 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                                     break
                             if is_valid:
                                 lista_de_opciones = temp_data
-                        
-                        if isinstance(lista_de_opciones, list) and lista_de_opciones:
-                            first_item = lista_de_opciones[0]
                             
-                            if isinstance(first_item, dict):
-                                opciones_finales = [str(item.get(paso['valor'])) for item in lista_de_opciones if isinstance(item, dict) and paso.get('valor') in item]
-                                paso['data'] = opciones_finales
-                                paso['data_key'] = lista_de_opciones 
-                                print(f"Éxito (Objetos): Se obtuvieron {len(opciones_finales)} opciones para '{paso.get('nombre')}'.")
-                            
-                            elif isinstance(first_item, str):
-                                paso['data'] = lista_de_opciones
-                                paso['data_key'] = lista_de_opciones 
-                                print(f"Éxito (Strings): Se obtuvieron {len(lista_de_opciones)} opciones para '{paso.get('nombre')}'.")
-
+                            if isinstance(lista_de_opciones, list) and lista_de_opciones:
+                                if isinstance(lista_de_opciones[0], dict):
+                                    paso['data'] = [str(item.get(paso['valor'])) for item in lista_de_opciones]
+                                    paso['data_key'] = lista_de_opciones
+                                else:
+                                    paso['data'] = lista_de_opciones
+                                    paso['data_key'] = lista_de_opciones
+                                paso['sin_datos'] = False
+                                print(f"Éxito: Se obtuvieron {len(paso['data'])} opciones para '{paso.get('nombre')}'.")
                             else:
-                                paso['sin_datos'] = True
-                                print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió una lista con formato inesperado.")
-
-                            paso['sin_datos'] = False if paso.get('data') else True
+                                paso['error_api'] = 'LISTA_VACIA'
                         else:
-                            paso['sin_datos'] = True
-                            print(f"Advertencia: La API para '{paso.get('nombre')}' no devolvió una lista válida o la lista estaba vacía.", flush=True)
+                            print(f"--- Paso '{paso.get('nombre')}' no espera una lista. Procesando como objeto único. ---", flush=True)
+                            respuesta_obj = api_data[0] if isinstance(api_data, list) and api_data else api_data
+                            
+                            if isinstance(respuesta_obj, dict) and str(respuesta_obj.get('estado')) == '200':
+                                paso['sin_datos'] = False
+                                output_variable = paso.get('variable_salida')
+                                if output_variable:
+                                    valor_a_guardar = respuesta_obj.get('existe_paciente', 'FALSE')
+                                    estado_actual[output_variable] = valor_a_guardar
+                                    print(f"Éxito: Estado actualizado. '{output_variable}' = '{valor_a_guardar}'", flush=True)
+                            else:
+                                paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
                     
                     elif response.status_code == 300:
                         paso['sin_datos'] = True
                         print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió el código 300, indicando que no hay datos disponibles.", flush=True)
-
                     else:
                         paso['sin_datos'] = True
                         print(f"!!! ERROR: La API para '{paso.get('nombre')}' devolvió un código de estado inesperado: {response.status_code}. !!!", flush=True)

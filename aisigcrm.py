@@ -1869,16 +1869,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
             if requisitos_completos:
                 paso['error_api'] = None
                 try:
-                    if paso.get('nombre') == 'consulta_documento':
-                        print("--- Aplicando mapeo de parámetros para consulta_documento ---", flush=True)
-                        payload = {
-                            "company_id": estado_actual.get("company_id"),
-                            "identificacion": estado_actual.get("identificacion"),
-                            "tipo_documento": estado_actual.get("tipo_documento")
-                        }
-                    else:
-                        payload = {param: estado_actual.get(param) for param in params_requeridos}
-
+                    payload = {param: estado_actual.get(param) for param in params_requeridos}
                     method = paso.get('method', 'GET').upper()
                     headers = {'Content-Type': 'application/json'}
                     
@@ -2175,7 +2166,7 @@ def orquestar_chat():
                     "accion": "finalizado_por_usuario"
                 })
             
-            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar', 'regresarme', 'retroceder', 'cambiar respuesta', 'cambiar mi respuesta', 'cambiar selección', 'cambiar de opción']
+            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar', 'regresarme', 'retroceder', 'cambiar respuesta', 'cambiar mi respuesta', 'cambiar selección', 'cambiar mi selección', 'cambiar de opción']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 print("--- Intención de retroceso detectada por el usuario ---", flush=True)
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
@@ -2199,7 +2190,7 @@ def orquestar_chat():
                     coincidencias = []
                     
                     if len(opciones_paso_actual) == 1:
-                        palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto']
+                        palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto', 'bueno']
                         if valor_usuario.lower() in palabras_clave_afirmativas:
                             print("--- Respuesta afirmativa detectada para una única opción. Seleccionando automáticamente. ---", flush=True)
                             coincidencias.append(opciones_paso_actual[0])
@@ -2219,12 +2210,15 @@ def orquestar_chat():
                                 if mejor_opcion:
                                     coincidencias.append(mejor_opcion)
                             else:
-                                print("--- Usando la búsqueda de texto normalizado (sin tildes)... ---", flush=True)
+                                print("--- Usando la búsqueda de texto inteligente y manejo de ambigüedad... ---", flush=True)
                                 valor_usuario_normalizado = unidecode(valor_usuario.lower())
+                                palabras_usuario = [palabra for palabra in valor_usuario_normalizado.split() if len(palabra) > 2]
+
                                 for opcion in opciones_paso_actual:
                                     opcion_normalizada = unidecode(opcion.lower())
-                                    if valor_usuario_normalizado in opcion_normalizada:
-                                        coincidencias.append(opcion) 
+                                    
+                                    if all(palabra in opcion_normalizada for palabra in palabras_usuario):
+                                        coincidencias.append(opcion)
 
                     if len(coincidencias) == 1:
                         valor_procesado = coincidencias[0]

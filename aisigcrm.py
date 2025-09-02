@@ -2210,15 +2210,26 @@ def orquestar_chat():
                                 if mejor_opcion:
                                     coincidencias.append(mejor_opcion)
                             else:
-                                print("--- Usando la búsqueda de texto inteligente y manejo de ambigüedad... ---", flush=True)
+                                print("--- Usando la búsqueda flexible por palabras clave comunes... ---", flush=True)
                                 valor_usuario_normalizado = unidecode(valor_usuario.lower())
-                                palabras_usuario = [palabra for palabra in valor_usuario_normalizado.split() if len(palabra) > 2]
-
+                                palabras_usuario = set(valor_usuario_normalizado.split())
+                                
+                                posibles_coincidencias = []
                                 for opcion in opciones_paso_actual:
                                     opcion_normalizada = unidecode(opcion.lower())
+                                    palabras_opcion = set(opcion_normalizada.split())
                                     
-                                    if all(palabra in opcion_normalizada for palabra in palabras_usuario):
-                                        coincidencias.append(opcion)
+                                    palabras_comunes = palabras_opcion.intersection(palabras_usuario)
+                                    if palabras_comunes:
+                                        posibles_coincidencias.append({
+                                            "opcion": opcion,
+                                            "puntuacion": len(palabras_comunes)
+                                        })
+                                
+                                if posibles_coincidencias:
+                                    mejor_puntuacion = max(item['puntuacion'] for item in posibles_coincidencias)
+                                    mejores_opciones = [item['opcion'] for item in posibles_coincidencias if item['puntuacion'] == mejor_puntuacion]
+                                    coincidencias = mejores_opciones
 
                     if len(coincidencias) == 1:
                         valor_procesado = coincidencias[0]

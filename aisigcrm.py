@@ -2106,7 +2106,7 @@ def orquestar_chat():
         - **Respuesta Ambigua:** Si la respuesta es ambigua, tu mensaje debe ser una pregunta de clarificación, listando las opciones coincidentes.
 
     3.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos:** Tu objetivo es obtener el siguiente dato. Formula una pregunta clara. Si hay `Datos disponibles` (una lista), DEBES OBLIGATORIAMENTE mostrar esa lista de forma numerada usando `<br>`.e indicar que se puede responder con número o texto.
+        - **Si faltan datos:** Tu objetivo es obtener el siguiente dato. Formula una pregunta clara. Si hay `Datos disponibles` (una lista), DEBES OBLIGATORIAMENTE mostrar esa lista de forma numerada usando `<br>` e indicar que se puede responder con número o texto.
         - **Error de Disponibilidad:** Si una API no devolvió `Datos disponibles`, informa al usuario amablemente.
         - **Si TODOS los datos están completos:** Tu tarea es finalizar la conversación. Revisa las `REGLAS DE NEGOCIO` para determinar CÓMO finalizar.
             - Si una regla indica pedir confirmación, genera un resumen y pregunta.
@@ -2165,6 +2165,7 @@ def orquestar_chat():
         paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
         if paso_pendiente and req_data.mensaje_usuario:
+            
             palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'chao', 'ya no', 'no gracias']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
                 print("--- Intención de finalizar detectada por el usuario ---", flush=True)
@@ -2263,6 +2264,7 @@ def orquestar_chat():
 
         if not accion_siguiente_config:
             nombre_tarea_actual = "Finalizar Conversación"
+            mensaje_para_prompt = req_data.mensaje_usuario
         else:
             nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
             datos_para_siguiente_accion = accion_siguiente_config.get('data', [])
@@ -2285,6 +2287,8 @@ def orquestar_chat():
                     return jsonify({ "mensaje_bot": "Lo siento, ocurrió un error crítico y no podemos continuar.", "accion": "finalizado", "nuevo_estado": estado_actual })
                 
                 mensaje_para_prompt = mensaje_error_contextual
+            else:
+                mensaje_para_prompt = ""
                 
         if isinstance(datos_para_siguiente_accion, str) and datos_para_siguiente_accion:
             datos_para_siguiente_accion = [item.strip() for item in datos_para_siguiente_accion.split(';')]

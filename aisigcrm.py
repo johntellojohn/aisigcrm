@@ -2197,19 +2197,20 @@ def orquestar_chat():
                     es_fecha_o_hora = es_paso_de_fecha_hora(opciones_paso_actual)
                     coincidencias = []
                     
-                    if len(opciones_paso_actual) == 1:
-                        palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto', 'bueno']
-                        if valor_usuario.lower() in palabras_clave_afirmativas:
-                            print("--- Respuesta afirmativa detectada para una única opción. Seleccionando automáticamente. ---", flush=True)
-                            coincidencias.append(opciones_paso_actual[0])
-
+                    if valor_usuario.isdigit():
+                        try:
+                            indice = int(valor_usuario) - 1
+                            if 0 <= indice < len(opciones_paso_actual):
+                                print(f"--- Usuario seleccionó la opción número {valor_usuario}. Corresponde a: '{opciones_paso_actual[indice]}' ---", flush=True)
+                                coincidencias.append(opciones_paso_actual[indice])
+                        except (ValueError, IndexError):
+                            pass
+                    
                     if not coincidencias:
-                        if valor_usuario.isdigit():
-                            try:
-                                indice = int(valor_usuario) - 1
-                                if 0 <= indice < len(opciones_paso_actual):
-                                    coincidencias.append(opciones_paso_actual[indice])
-                            except (ValueError, IndexError): pass
+                        if len(opciones_paso_actual) == 1:
+                            palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto', 'bueno']
+                            if valor_usuario.lower() in palabras_clave_afirmativas:
+                                coincidencias.append(opciones_paso_actual[0])
 
                         if not coincidencias:
                             if es_fecha_o_hora:
@@ -2226,13 +2227,9 @@ def orquestar_chat():
                                 for opcion in opciones_paso_actual:
                                     opcion_normalizada = unidecode(opcion.lower())
                                     palabras_opcion = set(opcion_normalizada.split())
-                                    
                                     palabras_comunes = palabras_opcion.intersection(palabras_usuario)
                                     if palabras_comunes:
-                                        posibles_coincidencias.append({
-                                            "opcion": opcion,
-                                            "puntuacion": len(palabras_comunes)
-                                        })
+                                        posibles_coincidencias.append({"opcion": opcion, "puntuacion": len(palabras_comunes)})
                                 
                                 if posibles_coincidencias:
                                     mejor_puntuacion = max(item['puntuacion'] for item in posibles_coincidencias)

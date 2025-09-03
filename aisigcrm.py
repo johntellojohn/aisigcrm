@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 import mysql.connector
 from pydantic import BaseModel
 from typing import Dict, Any, List
-from dateutil.parser import parse
+from dateutil.parser import parse, ParserError
 from datetime import time
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
@@ -2015,61 +2015,81 @@ def reversar_paso_en_estado(estado: Dict[str, Any], pasos_ordenados: List[Dict[s
             
     return estado
 
-def es_paso_de_fecha_hora(opciones: list) -> bool:
+def es_paso_de_fecha(opciones: list) -> bool:
     """
-    Detecta si una lista de opciones corresponde a fechas o rangos de tiempo.
+    Determina si las opciones son fechas (YYYY-MM-DD) en lugar de horas.
     """
     if not opciones:
         return False
-    
-    primera_opcion = str(opciones[0])
-    patron_fecha = r'^\d{4}-\d{2}-\d{2}$'
-    patron_hora = r'^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$'
-    
-    if re.match(patron_fecha, primera_opcion) or re.match(patron_hora, primera_opcion):
-        print(f"--- Detectado paso de fecha/hora. Opciones: {opciones[:2]}... ---", flush=True)
-        return True
-        
-    return False
+    return re.match(r'^\d{4}-\d{2}-\d{2}$', str(opciones[0]))
 
 def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
     """
-    Interpreta texto de fecha/hora del usuario y lo compara con una lista de opciones.
+    Interpreta texto de fecha/hora del usuario y lo compara con una lista de opciones,
+    manejando lenguaje natural y varios formatos de hora de forma robusta.
     """
-    meses_es = {
-        'enero': 'january', 'febrero': 'february', 'marzo': 'march', 'abril': 'april',
-        'mayo': 'may', 'junio': 'june', 'julio': 'july', 'agosto': 'august',
-        'septiembre': 'september', 'octubre': 'october', 'noviembre': 'november', 'diciembre': 'december'
-    }
+    if not opciones:
+        return None
 
-    mensaje_procesado = mensaje_usuario.lower()
-    for es, en in meses_es.items():
-        mensaje_procesado = mensaje_procesado.replace(es, en)
+    if es_paso_de_fecha(opciones):
+        meses_es = {
+            'enero': 'january', 'febrero': 'february', 'marzo': 'march', 'abril': 'april',
+            'mayo': 'may', 'junio': 'june', 'julio': 'july', 'agosto': 'august',
+            'septiembre': 'september', 'octubre': 'october', 'noviembre': 'november', 'diciembre': 'december'
+        }
+        mensaje_procesado = mensaje_usuario.lower()
+        for es, en in meses_es.items():
+            mensaje_procesado = mensaje_procesado.replace(es, en)
+        
+        try:
+            dt_usuario = parse(mensaje_procesado, fuzzy=True)
+            for opcion in opciones:
+                dt_opcion = parse(opcion)
+                if dt_opcion.date() == dt_usuario.date():
+                    return opcion
+        except (ValueError, ParserError):
+            return None 
+        return None
+    
+    texto = unidecode(mensaje_usuario.lower())
+    texto = re.sub(r'\b(a la|a las|la de las)\b', '', texto).strip()
+    texto = re.sub(r'\b(de la manana|am)\b', 'am', texto)
+    texto = re.sub(r'\b(de la tarde|de la noche|pm)\b', 'pm', texto)
+    texto = re.sub(r'\b(del mediodia)\b', '12pm', texto)
+    texto = re.sub(r'\s+', '', texto) 
 
     try:
-        dt_usuario = parse(mensaje_procesado, fuzzy=True)
-    except (ValueError, TypeError):
-        return NotImplemented
-
-    for opcion in opciones:
-        try:
-            dt_opcion = parse(opcion)
-            if dt_opcion.date() == dt_usuario.date():
-                return opcion
-            continue
-        except ValueError:
-            pass
-
-        try:
-            partes = opcion.replace(" ", "").split('-')
+        hora_usuario = parse(texto).time()
+        for opcion in opciones:
+            match_inicio = re.match(r'^\s*(\d{1,2}:\d{2})', opcion)
+            if match_inicio:
+                hora_inicio_opcion = parse(match_inicio.group(1)).time()
+                if hora_usuario == hora_inicio_opcion:
+                    return opcion
+    except (ParserError, ValueError):
+        pass 
+    try:
+        hora_usuario = parse(texto).time()
+        for opcion in opciones:
+            partes = [p.strip() for p in opcion.split('-')]
             if len(partes) == 2:
                 hora_inicio = parse(partes[0]).time()
                 hora_fin = parse(partes[1]).time()
-                hora_usuario = dt_usuario.time()
-                if hora_inicio <= hora_usuario <= hora_fin:
+                if hora_inicio <= hora_usuario < hora_fin:
                     return opcion
-        except ValueError:
-            pass
+    except (ParserError, ValueError):
+        pass
+
+    numeros_usuario = "".join(re.findall(r'\d+', texto))
+    if numeros_usuario:
+        for opcion in opciones:
+
+            if opcion.strip().startswith(numeros_usuario):
+                return opcion
+            if len(numeros_usuario) >= 3:
+                opcion_numerica = "".join(re.findall(r'\d+', opcion.split('-')[0]))
+                if opcion_numerica.startswith(numeros_usuario):
+                    return opcion
             
     return None
 
@@ -2198,7 +2218,7 @@ def orquestar_chat():
                     if isinstance(opciones_paso_actual, str) and opciones_paso_actual:
                         opciones_paso_actual = [item.strip() for item in opciones_paso_actual.split(';')]
 
-                    es_fecha_o_hora = es_paso_de_fecha_hora(opciones_paso_actual)
+                    es_fecha_o_hora = es_paso_de_fecha(opciones_paso_actual)
                     coincidencias = []
                     
                     if valor_usuario.isdigit():

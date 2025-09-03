@@ -28,25 +28,22 @@ sudo apt-get install -y ca-certificates curl gnupg
 
 ### 3. Añadir la clave GPG oficial de Docker para verificar los paquetes
 sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL [https://download.docker.com/linux/debian/gpg](https://download.docker.com/linux/debian/gpg) | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
 ### 4. Añadir el repositorio de Docker a las fuentes de APT
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] [https://download.docker.com/linux/debian](https://download.docker.com/linux/debian) \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
   $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+### Instala la Dependencia para HTTPS
+  sudo apt-get install apt-transport-https -y
 
 ### 5. Instalar Docker Engine, CLI, Containerd y el plugin de Compose
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-## 2.2. Añadir tu Usuario al Grupo de Docker (Muy Recomendado)
-Esto te permite ejecutar comandos docker sin necesidad de sudo.
-
-sudo usermod -aG docker $USER
-
-¡Importante! Después de ejecutar este comando, debes cerrar tu sesión SSH y volver a conectarte para que el cambio de grupo se aplique.
 
 ## 2.3. Verificar la Instalación de Docker
 Una vez reconectado, verifica que ambos comandos funcionan correctamente sin sudo.
@@ -62,28 +59,17 @@ Navega al directorio deseado (ej. /var/www/html) y clona tu proyecto.
 
 ### Navega al directorio (créalo si no existe)
 sudo mkdir -p /var/www/html
-sudo chown $USER:$USER /var/www/html
 cd /var/www/html
 
 ### Clona tu repositorio
 git clone [https://tu-repositorio.com/aisigcrm.git](https://tu-repositorio.com/aisigcrm.git)
 cd aisigcrm
 
-## 3.2. Configurar Variables de Entorno
-Crea y edita tu archivo .env con las credenciales y configuraciones para el entorno de producción.
-
-nano .env
-
-Pega aquí tus variables como OPENAI_API_KEY, DB_HOST, etc. y guarda el archivo.
 
 ## 3.3. Levantar los Contenedores
 Este comando leerá tus archivos Dockerfile y docker-compose.yml, construirá la imagen y arrancará el contenedor en segundo plano.
 
 docker compose up --build -d
-
---build: Fuerza la construcción de la imagen la primera vez.
-
--d: Ejecuta los contenedores en modo "detached" (segundo plano).
 
 ## 3.4. Verificar el Funcionamiento
 Revisa que el contenedor esté corriendo y consulta sus logs para detectar posibles errores.

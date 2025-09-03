@@ -2223,15 +2223,14 @@ def orquestar_chat():
                             if coincidencia: print(f"--- Coincidencia por LENGUAJE NATURAL (Texto): '{coincidencia}' ---", flush=True)
                 
                 if coincidencia:
-                    if variable_a_llenar.endswith('_id') or variable_a_llenar.startswith('ID_'):
-                        nombre_amigable_key = f"nombre_{variable_a_llenar.lower().replace('_id','').replace('id_','')}"
-                        estado_actual[nombre_amigable_key] = coincidencia
-                    
                     if paso_pendiente.get('key'):
                         valor_mapeado = map_value_to_key(paso_pendiente, coincidencia)
                         estado_actual[variable_a_llenar] = valor_mapeado
+                        nombre_amigable_key = f"nombre_{variable_a_llenar.lower().replace('_id','').replace('id_','')}"
+                        estado_actual[nombre_amigable_key] = coincidencia
                     else:
                         estado_actual[variable_a_llenar] = coincidencia
+                    
                     print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
 
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
@@ -2244,7 +2243,8 @@ def orquestar_chat():
         accion_final_forzada = None
 
         if accion_siguiente_config:
-            datos_disponibles = accion_siguiente_config.get('data', [])
+            datos_disponibles = accion_siguiente_config.get('data') or []
+            
             if accion_siguiente_config.get('sin_datos'):
                 nombre_tarea_actual = "Informar error y retroceder"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')

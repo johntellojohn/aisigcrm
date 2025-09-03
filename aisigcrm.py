@@ -2088,35 +2088,30 @@ def orquestar_chat():
     PLANTILLA_PROMPT_BASE = """
     # CONTEXTO Y PERSONALIDAD
     {orq_contexto}
-    Tono: {orq_tono}
     ---
     # REGLAS DE NEGOCIO (Definidas por el usuario)
     {orq_reglas}
     ---
-    # INSTRUCCIONES ADICIONALES (Definidas por el usuario)
-    {orq_respuestas}
-    ---
     **TU PROCESO DE DECISIÓN COMO IA (Instrucciones Fijas):**
 
-    1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener a continuación.
+    1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
-    2.  **ANALIZA EL MENSAJE DEL USUARIO (SI EXISTE):**
-        - **Intención de Retroceder:** Si el usuario quiere cambiar una respuesta anterior (ej. "quiero otro doctor"), tu `accion` en el JSON debe ser `reversar_paso`.
-        - **Pregunta Directa:** Si el usuario hace una pregunta sobre la tarea (ej. "¿qué opciones hay?"), respóndela usando los `Datos disponibles` y vuelve a pedirle que elija.
-        - **Respuesta Ambigua:** Si la respuesta es ambigua, tu mensaje debe ser una pregunta de clarificación, listando las opciones coincidentes.
+    2.  **MANEJO DE CASOS ESPECIALES:**
+        - **Si solo hay UNA opción disponible:** En lugar de pedir que elijan, informa al usuario cuál es la única opción y pregunta si desea continuar con ella (ej. "El único doctor disponible es... ¿Deseas agendar con él?").
+        - **Respuesta Ambigua:** Si la respuesta del usuario coincide con varias opciones, pide una aclaración listando las opciones coincidentes.
+        - **Manejo de Opción Única:** Si la `TAREA ACTUAL` es recolectar un dato y solo hay UNA opción en `Datos disponibles`, tu mensaje DEBE informar al usuario cuál es esa opción y preguntarle si desea continuar (ej. "La única sede disponible es 'Clínica Central'. ¿Deseas continuar?").
+        - **Intención de Retroceder:** Si el usuario quiere cambiar una respuesta anterior, tu `accion` en el JSON debe ser `reversar_paso`.
 
     3.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos:** Tu objetivo es obtener el siguiente dato. Formula una pregunta clara. Si hay `Datos disponibles` (una lista), DEBES OBLIGATORIAMENTE mostrar esa lista de forma numerada usando `<br>` e indicar que se puede responder con número o texto.
+        - **Si faltan datos:** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada.
         - **Error de Disponibilidad:** Si una API no devolvió `Datos disponibles`, informa al usuario amablemente.
-        - **Si TODOS los datos están completos:** Tu tarea es finalizar la conversación. Revisa las `REGLAS DE NEGOCIO` para determinar CÓMO finalizar.
-            - Si una regla indica pedir confirmación, genera un resumen y pregunta.
-            - Si la respuesta del usuario a la confirmación es afirmativa, finaliza con éxito (`"accion": "finalizado"`). Si es negativa, finaliza indicando la cancelación (`"accion": "finalizado_por_usuario"`).
-            - Si ninguna regla indica una confirmación, finaliza directamente (`"accion": "finalizado"`).
+        - **Si TODOS los datos están completos:** Revisa las `REGLAS DE NEGOCIO` para ver CÓMO finalizar. Si una regla pide confirmación, genera un resumen COMPLETO Y LEGIBLE de los datos (usando los nombres amigables como 'nombre_doctor', no los IDs).
+        - **Si estás confirmando:** Interpreta la respuesta del usuario (ej. "confirmo") y finaliza el flujo (`"accion": "finalizado"` o `"accion": "finalizado_por_usuario"`).
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}
 
-    **Estado actual de la conversación:**
+    **Estado actual de la conversación (Usa los nombres, no los IDs, para el resumen):**
     {estado_json}
 
     **Datos disponibles (si aplica):**
@@ -2127,7 +2122,7 @@ def orquestar_chat():
     ---
     # FORMATO DE RESPUESTA OBLIGATORIO (JSON VÁLIDO)
     {orq_formato_respuestas}
-    """    
+    """
     db_connection = None
     try:
         db_name_from_laravel = request.json.get('db_name')
@@ -2186,6 +2181,14 @@ def orquestar_chat():
                 valor_usuario = req_data.mensaje_usuario.strip()
                 tipo_paso = paso_pendiente.get('tipo')
                 valor_procesado = None
+
+                opciones_del_paso = paso_pendiente.get('data', [])
+                if len(opciones_del_paso) == 1:
+                    palabras_clave_negativas = ['no', 'cancelar', 'otro', 'otra', 'no quiero', 'regresar', 'dejame volver para elegir otra cosa']
+                    if any(keyword in valor_usuario.lower() for keyword in palabras_clave_negativas):
+                        print("--- Usuario rechazó la opción única. Revirtiendo paso. ---", flush=True)
+                        estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                        req_data.mensaje_usuario = ""
                 
                 if tipo_paso == 'TEXT':
                     valor_procesado = valor_usuario
@@ -2208,12 +2211,12 @@ def orquestar_chat():
                             pass
                     
                     if not coincidencias:
-                        if len(opciones_paso_actual) == 1:
+                        if len(opciones_paso_actual) == 1: 
                             palabras_clave_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'yes', 'confirmo', 'adelante', 'correcto', 'exacto', 'bueno']
                             if valor_usuario.lower() in palabras_clave_afirmativas:
                                 coincidencias.append(opciones_paso_actual[0])
 
-                        if not coincidencias:
+                        if not coincidencias: 
                             if es_fecha_o_hora:
                                 print("--- Usando el traductor de fechas/horas... ---", flush=True)
                                 mejor_opcion = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
@@ -2246,11 +2249,14 @@ def orquestar_chat():
                         return jsonify({ "mensaje_bot": mensaje_ambiguo, "accion": "pedir_clarificacion", "nuevo_estado": req_data.estado_actual })
 
                 if valor_procesado:
+                    if variable_a_llenar.endswith('_id') or variable_a_llenar.startswith('ID_'):
+                        nombre_amigable_key = f"nombre_{variable_a_llenar.lower().replace('_id','').replace('id_','')}"
+                        estado_actual[nombre_amigable_key] = valor_procesado
+                        print(f"--- Guardando nombre amigable: Variable '{nombre_amigable_key}' = '{valor_procesado}' ---", flush=True)
+
                     valor_mapeado = map_value_to_key(paso_pendiente, valor_procesado)
                     estado_actual[variable_a_llenar] = valor_mapeado
                     print(f"--- Mensaje de usuario procesado. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
-                else:
-                    print(f"--- No se pudo procesar la entrada '{valor_usuario}' para el paso '{paso_pendiente.get('nombre')}' ---", flush=True)
 
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
@@ -2262,7 +2268,11 @@ def orquestar_chat():
         mensaje_para_prompt = req_data.mensaje_usuario
         mensaje_error_contextual = ""
 
-        if not accion_siguiente_config:
+        if accion_siguiente_config and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API'] and len(accion_siguiente_config.get('data', [])) == 1:
+            nombre_tarea_actual = "confirmar_opcion_unica"
+            datos_para_siguiente_accion = accion_siguiente_config.get('data')
+            mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción disponible es '{datos_para_siguiente_accion[0]}'. Tu tarea es informar esto al usuario y preguntarle si desea continuar. Indícale que puede responder con 'si' para aceptar o 'no' para volver al paso anterior y elegir otra opción."
+        elif not accion_siguiente_config:
             nombre_tarea_actual = "Finalizar Conversación"
             mensaje_para_prompt = req_data.mensaje_usuario
         else:

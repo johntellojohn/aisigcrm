@@ -2116,18 +2116,19 @@ def orquestar_chat():
 
     2.  **FORMULA TU RESPUESTA:**
         - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada.
+        - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
         - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**
-            a. **Primero, SIEMPRE muestra el resumen completo** que te proporciono en `Estado actual de la conversación`. Usa un formato de lista claro y legible.
+            a. **Primero, SIEMPRE muestra el resumen completo** de los datos.
             b. **Después del resumen**, haz la pregunta de confirmación (ej. "¿Deseas confirmar la cita con estos datos?").
         - **Si el usuario responde a la confirmación (TAREA = Procesar Confirmación):**
-            a. Si dice "sí" o "confirmo", genera un mensaje de éxito y usa la acción `finalizado`.
-            b. Si dice "no" o "cambiar", pregunta qué le gustaría modificar y usa la acción `reversar_paso`.
+            a. Si el usuario confirmó, genera un mensaje de éxito y usa la acción `finalizado`.
+            b. Si el usuario negó, pregunta qué le gustaría modificar y usa la acción `reversar_paso`.
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}
 
-    **Estado actual de la conversación (Para resúmenes):**
+    **Estado actual de la conversación (IMPORTANTE: Para resúmenes, usa los nombres amigables como 'nombre_sede', no los IDs como 'ID_SEDE'):**
     {estado_json}
 
     **Datos disponibles (si aplica, para mostrar en listas):**
@@ -2226,8 +2227,11 @@ def orquestar_chat():
                         nombre_amigable_key = f"nombre_{variable_a_llenar.lower().replace('_id','').replace('id_','')}"
                         estado_actual[nombre_amigable_key] = coincidencia
                     
-                    valor_mapeado = map_value_to_key(paso_pendiente, coincidencia)
-                    estado_actual[variable_a_llenar] = valor_mapeado
+                    if paso_pendiente.get('key'):
+                        valor_mapeado = map_value_to_key(paso_pendiente, coincidencia)
+                        estado_actual[variable_a_llenar] = valor_mapeado
+                    else:
+                        estado_actual[variable_a_llenar] = coincidencia
                     print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
 
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
@@ -2237,16 +2241,22 @@ def orquestar_chat():
         nombre_tarea_actual = ''
         datos_para_siguiente_accion = []
         mensaje_para_prompt = req_data.mensaje_usuario
+        accion_final_forzada = None
 
         if accion_siguiente_config:
+            datos_disponibles = accion_siguiente_config.get('data', [])
             if accion_siguiente_config.get('sin_datos'):
                 nombre_tarea_actual = "Informar error y retroceder"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
                 mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+            elif len(datos_disponibles) == 1 and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API']:
+                nombre_tarea_actual = "Confirmar opción única"
+                datos_para_siguiente_accion = datos_disponibles
+                mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción disponible es '{datos_disponibles[0]}'. Tu tarea es informar esto al usuario y preguntarle si desea continuar."
             else:
                 nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
-                datos_para_siguiente_accion = accion_siguiente_config.get('data', [])
+                datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
         else: 
             palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto']
@@ -2255,12 +2265,14 @@ def orquestar_chat():
             if any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_afirmativas):
                 nombre_tarea_actual = "Procesar Confirmación"
                 mensaje_para_prompt = "El usuario ha confirmado la cita. Genera un mensaje de éxito."
+                accion_final_forzada = "finalizado"
             elif any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_negativas):
                 nombre_tarea_actual = "Procesar Confirmación"
                 mensaje_para_prompt = "El usuario ha rechazado la confirmación. Pregúntale qué dato le gustaría cambiar."
+                accion_final_forzada = "reversar_paso"
             else:
                 nombre_tarea_actual = "Finalizar Conversación"
-                mensaje_para_prompt = "Presenta el resumen y pide confirmación."
+                mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),
@@ -2285,7 +2297,7 @@ def orquestar_chat():
         final_response = {
             "mensaje_bot": gpt_output.get("mensaje"),
             "nuevo_estado": estado_actual,
-            "accion": gpt_output.get("accion", "indefinida")
+            "accion": accion_final_forzada if accion_final_forzada else gpt_output.get("accion", "indefinida")
         }
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)

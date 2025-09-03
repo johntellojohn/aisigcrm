@@ -2100,6 +2100,9 @@ def orquestar_chat():
     PLANTILLA_PROMPT_BASE = """
     # CONTEXTO Y PERSONALIDAD
     {orq_contexto}
+
+    # TONO DE VOZ
+    {orq_tono}
     ---
     # REGLAS DE NEGOCIO (Definidas por el usuario)
     {orq_reglas}
@@ -2112,7 +2115,7 @@ def orquestar_chat():
     1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
     2.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada con <br>.
+        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
         - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**
             a. **Primero, SIEMPRE muestra el resumen completo** que te proporciono en `Estado actual de la conversación`. Usa un formato de lista claro y legible.
@@ -2181,36 +2184,49 @@ def orquestar_chat():
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
                 paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
-                req_data.mensaje_usuario = "" 
+                req_data.mensaje_usuario = ""
             
             if req_data.mensaje_usuario and paso_pendiente:
                 variable_a_llenar = paso_pendiente.get('variable_salida')
                 valor_usuario = req_data.mensaje_usuario.strip()
+                tipo_paso = paso_pendiente.get('tipo')
                 opciones_paso_actual = paso_pendiente.get('data', []) or []
-                valor_procesado = None
-
                 coincidencia = None
-                if valor_usuario.isdigit():
-                    indice = int(valor_usuario) - 1
-                    if 0 <= indice < len(opciones_paso_actual):
-                        coincidencia = opciones_paso_actual[indice]
-                else:
-                    if es_paso_de_fecha_o_hora(opciones_paso_actual):
-                         coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
-                    else:
-                        valor_normalizado = unidecode(valor_usuario.lower())
-                        for opcion in opciones_paso_actual:
-                            if valor_normalizado in unidecode(opcion.lower()):
-                                coincidencia = opcion
-                                break
+                
+                if tipo_paso == 'TEXT':
+                    coincidencia = valor_usuario
+                    print(f"--- Paso de tipo TEXTO. Valor capturado: '{coincidencia}' ---", flush=True)
+
+                elif tipo_paso in ['MULTIPLE', 'API']:
+                    if valor_usuario.isdigit() and opciones_paso_actual:
+                        indice = int(valor_usuario) - 1
+                        if 0 <= indice < len(opciones_paso_actual):
+                            coincidencia = opciones_paso_actual[indice]
+                            print(f"--- Coincidencia por NÚMERO de opción: '{coincidencia}' ---", flush=True)
+
+                    if not coincidencia:
+                        if es_paso_de_fecha_o_hora(opciones_paso_actual):
+                             coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
+                             if coincidencia: print(f"--- Coincidencia por LENGUAJE NATURAL (Fecha/Hora): '{coincidencia}' ---", flush=True)
+                        else:
+                            valor_normalizado = unidecode(valor_usuario.lower())
+                            for opcion in opciones_paso_actual:
+                                if valor_normalizado == unidecode(str(opcion).lower()):
+                                    coincidencia = opcion
+                                    break
+                            if not coincidencia:
+                                for opcion in opciones_paso_actual:
+                                    if valor_normalizado in unidecode(str(opcion).lower()):
+                                        coincidencia = opcion
+                                        break
+                            if coincidencia: print(f"--- Coincidencia por LENGUAJE NATURAL (Texto): '{coincidencia}' ---", flush=True)
                 
                 if coincidencia:
-                    valor_procesado = coincidencia
                     if variable_a_llenar.endswith('_id') or variable_a_llenar.startswith('ID_'):
                         nombre_amigable_key = f"nombre_{variable_a_llenar.lower().replace('_id','').replace('id_','')}"
-                        estado_actual[nombre_amigable_key] = valor_procesado
+                        estado_actual[nombre_amigable_key] = coincidencia
                     
-                    valor_mapeado = map_value_to_key(paso_pendiente, valor_procesado)
+                    valor_mapeado = map_value_to_key(paso_pendiente, coincidencia)
                     estado_actual[variable_a_llenar] = valor_mapeado
                     print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{estado_actual.get(variable_a_llenar)}' ---", flush=True)
 
@@ -2226,7 +2242,7 @@ def orquestar_chat():
             if accion_siguiente_config.get('sin_datos'):
                 nombre_tarea_actual = "Informar error y retroceder"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
-                mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario de esto amablemente y dile que necesita elegir una opción diferente en el paso anterior."
+                mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
             else:
                 nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
@@ -2285,7 +2301,7 @@ def orquestar_chat():
         if db_connection and db_connection.is_connected():
             cursor.close()
             db_connection.close()
-
+            
 ###############
 # ip and port #
 ###############

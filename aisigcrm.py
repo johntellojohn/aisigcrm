@@ -2182,7 +2182,7 @@ def orquestar_chat():
                 tipo_paso = paso_pendiente.get('tipo')
                 valor_procesado = None
 
-                opciones_del_paso = paso_pendiente.get('data', [])
+                opciones_del_paso = paso_pendiente.get('data', []) or [] 
                 if len(opciones_del_paso) == 1:
                     palabras_clave_negativas = ['no', 'cancelar', 'otro', 'otra', 'no quiero', 'regresar', 'dejame volver para elegir otra cosa']
                     if any(keyword in valor_usuario.lower() for keyword in palabras_clave_negativas):

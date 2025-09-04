@@ -2182,6 +2182,9 @@ def orquestar_chat():
         """
         cursor.execute(sql_query, (req_data.flujo_id,))
         pasos_config = cursor.fetchall()
+        
+        if not flujo_config:
+            return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
 
         for paso in pasos_config:
             if paso['tipo'] == 'MULTIPLE' and isinstance(paso.get('data'), str):
@@ -2190,9 +2193,7 @@ def orquestar_chat():
 
         estado_actual = req_data.estado_actual.copy()
         pasos_ordenados = sorted(pasos_config, key=lambda p: int(p.get('order') or 999))
-        coincidencia = None
-
-        pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
+        
         paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
 
         if paso_pendiente and req_data.mensaje_usuario:
@@ -2205,7 +2206,8 @@ def orquestar_chat():
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
                 paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
                 req_data.mensaje_usuario = ""
-            
+
+            coincidencia = None
             if req_data.mensaje_usuario and paso_pendiente:
                 valor_usuario = req_data.mensaje_usuario.strip()
                 tipo_paso = paso_pendiente.get('tipo')
@@ -2221,20 +2223,22 @@ def orquestar_chat():
                     if not coincidencia:
                         coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_completas)
 
-        if coincidencia:
-            variable_a_llenar = paso_pendiente.get('variable_salida')
-            valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
-            estado_actual[variable_a_llenar] = valor_final_para_estado
-            print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
-            req_data.mensaje_usuario = ""
-            pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
-            paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
+            if coincidencia:
+                variable_a_llenar = paso_pendiente.get('variable_salida')
+                valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
+                estado_actual[variable_a_llenar] = valor_final_para_estado
+                print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
+                req_data.mensaje_usuario = ""
 
-        accion_siguiente_config = paso_pendiente
+        pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
+        pasos_ordenados = sorted(pasos_config, key=lambda p: int(p.get('order') or 999))
+        accion_siguiente_config = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
+
         nombre_tarea_actual, datos_para_siguiente_accion, mensaje_para_prompt, accion_final_forzada = '', [], req_data.mensaje_usuario, None
 
         if accion_siguiente_config:
-            datos_disponibles = accion_siguiente_config.get('data_key') or accion_siguiente_config.get('data', [])
+            datos_disponibles = accion_siguiente_config.get('data_key') or accion_siguiente_config.get('data') or []
+            
             if accion_siguiente_config.get('sin_datos'):
                 nombre_tarea_actual = "Informar error y retroceder"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')

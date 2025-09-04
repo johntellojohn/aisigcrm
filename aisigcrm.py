@@ -2150,12 +2150,6 @@ def orquestar_chat():
         - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista, de forma numerada con <br>. NO inventes, añadas ni modifiques las opciones que se te proporcionan.
         - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
-        - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**
-            a. **Primero, SIEMPRE muestra el resumen completo** de los datos.
-            b. **Después del resumen**, haz la pregunta de confirmación (ej. "¿Deseas confirmar la cita con estos datos?").
-            **Si el usuario responde a la confirmación (TAREA = Procesar Confirmación):**
-            a. Si el usuario confirmó, genera un mensaje de éxito y usa la acción `finalizado`.
-            b. Si el usuario negó, informa que el proceso se canceló y usa la acción `finalizado_por_usuario`.
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}

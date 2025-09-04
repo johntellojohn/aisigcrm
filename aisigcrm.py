@@ -2184,7 +2184,7 @@ def orquestar_chat():
         pasos_config = cursor.fetchall()
 
         for paso in pasos_config:
-            if paso['tipo'] == 'MULTIPLE' and isinstance(paso['data'], str):
+            if paso['tipo'] == 'MULTIPLE' and isinstance(paso.get('data'), str):
                 paso['data_key'] = [item.strip() for item in paso.get('data_key', '').split(';')] if paso.get('data_key') else []
                 paso['data'] = [item.strip() for item in paso['data'].split(';')]
 

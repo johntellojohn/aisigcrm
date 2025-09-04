@@ -2270,35 +2270,40 @@ def orquestar_chat():
                 mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
             elif len(datos_disponibles) == 1 and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API']:
-                nombre_tarea_actual = "Confirmar opción única"
+                nombre_tarea_actual = "Informar y continuar"
                 datos_para_siguiente_accion = datos_disponibles
-                mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción disponible es '{datos_disponibles[0]}'. Tu tarea es informar esto al usuario y preguntarle si desea continuar."
+                mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción es '{datos_disponibles[0]}'. Tu tarea es INFORMAR al usuario que esta opción ha sido seleccionada automáticamente y luego formular la pregunta para el SIGUIENTE paso requerido."
             else:
                 nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
         else:
+            # TAREA: Todos los datos han sido recolectados. Finalizar la conversación directamente.
             print("--- Todos los pasos completados. Finalizando flujo directamente. ---", flush=True)
 
+            # 1. Crear el resumen de los datos recolectados.
             estado_resumen = crear_estado_para_resumen(estado_actual, pasos_ordenados)
             
+            # Formatea el resumen en una lista de texto legible.
             resumen_items = []
             for key, value in estado_resumen.items():
-                if value: 
+                if value: # Solo incluye campos que tienen un valor.
                     key_legible = key.replace('_', ' ').capitalize()
                     resumen_items.append(f"- **{key_legible}:** {value}")
             
             resumen_texto = "\n".join(resumen_items)
 
+            # 2. Construir el mensaje final para el usuario.
             mensaje_final = f"¡Perfecto! Hemos agendado tu cita con los siguientes datos:\n\n{resumen_texto}\n\nGracias por usar nuestros servicios."
 
+            # 3. Crear la respuesta final y retornarla para terminar el flujo inmediatamente.
             final_response = {
                 "mensaje_bot": mensaje_final,
                 "nuevo_estado": estado_actual,
                 "accion": "finalizado"
             }
             
-            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL (SIN LLAMADA A IA) ---", flush=True)
             print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
             print("**************************************************", flush=True)
 

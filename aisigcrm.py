@@ -2196,6 +2196,13 @@ def orquestar_chat():
         """
         cursor.execute(sql_query, (req_data.flujo_id,))
         pasos_config = cursor.fetchall()
+        for paso in pasos_config:
+            if paso.get('tipo') == 'MULTIPLE' and isinstance(paso.get('data'), str):
+                try:
+                    paso['data'] = json.loads(paso['data'])
+                except json.JSONDecodeError:
+                    print(f"Advertencia: El campo 'data' para el paso '{paso.get('nombre')}' no es un JSON válido: {paso.get('data')}", flush=True)
+                    paso['data'] = []
         
         if not flujo_config:
             return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404

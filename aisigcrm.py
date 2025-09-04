@@ -2304,7 +2304,7 @@ def orquestar_chat():
 
             return jsonify(final_response)
 
-        # estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
+        estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),

@@ -2278,35 +2278,33 @@ def orquestar_chat():
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
         else:
-            palabras_negativas = ['no', 'cancelar', 'cancelo', 'anular', 'salir', 'no gracias']
-            palabras_afirmativas = ['si', 'sí', 'si confirmo', 'confirmo', 'acepto', 'ok', 'okay', 'okey', 'correcto', 'afirmativo', 'de acuerdo', 'claro', 'adelante']
+            print("--- Todos los pasos completados. Finalizando flujo directamente. ---", flush=True)
+
+            estado_resumen = crear_estado_para_resumen(estado_actual, pasos_ordenados)
             
-            mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
+            resumen_items = []
+            for key, value in estado_resumen.items():
+                if value: 
+                    key_legible = key.replace('_', ' ').capitalize()
+                    resumen_items.append(f"- **{key_legible}:** {value}")
             
-            if any(palabra in mensaje_usuario_norm for palabra in palabras_afirmativas) and len(mensaje_usuario_norm) < 20:
-                print("--- Confirmación afirmativa detectada. Finalizando flujo. ---", flush=True)
-                final_response = {
-                    "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. En breve recibirás una notificación de confirmación. ¡Gracias por usar nuestros servicios!",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado"
-                }
-                return jsonify(final_response)
+            resumen_texto = "\n".join(resumen_items)
 
-            elif any(palabra in mensaje_usuario_norm for palabra in palabras_negativas):
-                print("--- Negación detectada por el usuario. Finalizando flujo. ---", flush=True)
-                final_response = {
-                    "mensaje_bot": "Entendido. He cancelado el proceso. Si cambias de opinión, puedes iniciar de nuevo cuando quieras.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado_por_usuario"
-                }
-                return jsonify(final_response)
+            mensaje_final = f"¡Perfecto! Hemos agendado tu cita con los siguientes datos:\n\n{resumen_texto}\n\nGracias por usar nuestros servicios."
 
-            else:
-                nombre_tarea_actual = "Finalizar Conversación"
-                mensaje_para_prompt = "Presenta el resumen completo y final de la cita."
-                datos_para_siguiente_accion = []
+            final_response = {
+                "mensaje_bot": mensaje_final,
+                "nuevo_estado": estado_actual,
+                "accion": "finalizado"
+            }
+            
+            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+            print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+            print("**************************************************", flush=True)
 
-        estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
+            return jsonify(final_response)
+
+        # estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),

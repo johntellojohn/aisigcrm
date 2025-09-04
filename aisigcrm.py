@@ -2147,7 +2147,7 @@ def orquestar_chat():
     1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
     2.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista, de forma numerada. NO inventes, añadas ni modifiques las opciones que se te proporcionan.
+        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista, de forma numerada con <br>. NO inventes, añadas ni modifiques las opciones que se te proporcionan.
         - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
         - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**
@@ -2286,19 +2286,10 @@ def orquestar_chat():
         else:
             palabras_negativas = ['no', 'cancelar', 'cancelo', 'anular', 'salir', 'no gracias']
             palabras_afirmativas = ['si', 'sí', 'si confirmo', 'confirmo', 'acepto', 'ok', 'okay', 'okey', 'correcto', 'afirmativo', 'de acuerdo', 'claro', 'adelante']
-
+            
             mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
-
-            if any(palabra in mensaje_usuario_norm for palabra in palabras_negativas) or mensaje_usuario_norm.startswith('no '):
-                print("--- Negación detectada por el usuario. Finalizando flujo. ---", flush=True)
-                final_response = {
-                    "mensaje_bot": "Entendido. He cancelado el proceso. Si cambias de opinión, puedes iniciar de nuevo cuando quieras.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado_por_usuario"
-                }
-                return jsonify(final_response)
-
-            if any(palabra in mensaje_usuario_norm for palabra in palabras_afirmativas):
+            
+            if any(palabra in mensaje_usuario_norm for palabra in palabras_afirmativas) and len(mensaje_usuario_norm) < 20:
                 print("--- Confirmación afirmativa detectada. Finalizando flujo. ---", flush=True)
                 final_response = {
                     "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. En breve recibirás una notificación de confirmación. ¡Gracias por usar nuestros servicios!",
@@ -2307,9 +2298,19 @@ def orquestar_chat():
                 }
                 return jsonify(final_response)
 
-            nombre_tarea_actual = "Finalizar Conversación"
-            mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
-            datos_para_siguiente_accion = []
+            elif any(palabra in mensaje_usuario_norm for palabra in palabras_negativas):
+                print("--- Negación detectada por el usuario. Finalizando flujo. ---", flush=True)
+                final_response = {
+                    "mensaje_bot": "Entendido. He cancelado el proceso. Si cambias de opinión, puedes iniciar de nuevo cuando quieras.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado_por_usuario"
+                }
+                return jsonify(final_response)
+
+            else:
+                nombre_tarea_actual = "Finalizar Conversación"
+                mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
+                datos_para_siguiente_accion = []
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 

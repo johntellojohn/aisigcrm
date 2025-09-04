@@ -2182,9 +2182,6 @@ def orquestar_chat():
         """
         cursor.execute(sql_query, (req_data.flujo_id,))
         pasos_config = cursor.fetchall()
-        
-        if not flujo_config:
-            return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
 
         for paso in pasos_config:
             if paso['tipo'] == 'MULTIPLE' and isinstance(paso.get('data'), str):
@@ -2211,18 +2208,22 @@ def orquestar_chat():
             if req_data.mensaje_usuario and paso_pendiente:
                 valor_usuario = req_data.mensaje_usuario.strip()
                 tipo_paso = paso_pendiente.get('tipo')
-                opciones_completas = paso_pendiente.get('data_key') or paso_pendiente.get('data', [])
+                opciones_completas = paso_pendiente.get('data_key') or paso_pendiente.get('data', []) or []
                 
                 if tipo_paso == 'TEXT':
                     coincidencia = valor_usuario
                 elif tipo_paso in ['MULTIPLE', 'API']:
-                    if valor_usuario.isdigit():
+                    if len(opciones_completas) == 1:
+                        palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto', 'adelante']
+                        if any(palabra in valor_usuario.lower() for palabra in palabras_afirmativas):
+                            coincidencia = opciones_completas[0]
+                    if not coincidencia and valor_usuario.isdigit():
                         indice = int(valor_usuario) - 1
                         if 0 <= indice < len(opciones_completas):
                             coincidencia = opciones_completas[indice]
                     if not coincidencia:
                         coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_completas)
-
+            
             if coincidencia:
                 variable_a_llenar = paso_pendiente.get('variable_salida')
                 valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
@@ -2230,20 +2231,19 @@ def orquestar_chat():
                 print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
                 req_data.mensaje_usuario = ""
 
-        pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
-        pasos_ordenados = sorted(pasos_config, key=lambda p: int(p.get('order') or 999))
+        pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
+        pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
         accion_siguiente_config = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
-
+        
         nombre_tarea_actual, datos_para_siguiente_accion, mensaje_para_prompt, accion_final_forzada = '', [], req_data.mensaje_usuario, None
 
         if accion_siguiente_config:
-            datos_disponibles = accion_siguiente_config.get('data_key') or accion_siguiente_config.get('data') or []
+            datos_disponibles = accion_siguiente_config.get('data_key') or accion_siguiente_config.get('data', []) or []
             
             if accion_siguiente_config.get('sin_datos'):
-                nombre_tarea_actual = "Informar error y retroceder"
-                nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
-                mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
-                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                nombre_tarea_actual = "Informar error"
+                datos_para_siguiente_accion = []
+                mensaje_para_prompt = f"No se encontraron datos disponibles para el paso '{accion_siguiente_config.get('nombre')}'. Informa al usuario y pide que elija otra opción o modifique su selección."
             elif len(datos_disponibles) == 1 and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API']:
                 nombre_tarea_actual = "Confirmar opción única"
                 datos_para_siguiente_accion = datos_disponibles
@@ -2254,16 +2254,10 @@ def orquestar_chat():
                 mensaje_para_prompt = ""
         else: 
             palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto']
-            palabras_negativas = ['no', 'cancelar', 'cambiar']
-            
             if any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_afirmativas) and req_data.mensaje_usuario:
                 nombre_tarea_actual = "Procesar Confirmación"
                 mensaje_para_prompt = "El usuario ha confirmado la cita. Genera un mensaje de éxito y despedida."
                 accion_final_forzada = "finalizado"
-            elif any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_negativas) and req_data.mensaje_usuario:
-                nombre_tarea_actual = "Procesar Confirmación"
-                mensaje_para_prompt = "El usuario ha rechazado la confirmación. Pregúntale qué dato le gustaría cambiar."
-                accion_final_forzada = "reversar_paso"
             else:
                 nombre_tarea_actual = "Finalizar Conversación"
                 mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."

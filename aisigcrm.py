@@ -2148,12 +2148,15 @@ def orquestar_chat():
 
     2.  **FORMULA TU RESPUESTA:**
         - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada.
+        - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
         - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**
             a. **Primero, SIEMPRE muestra el resumen completo** de los datos.
             b. **Después del resumen**, haz la pregunta de confirmación (ej. "¿Deseas confirmar la cita con estos datos?").
-        - **Si el usuario responde a la confirmación (TAREA = Procesar Rechazo de Confirmación):**
-            a. Si el usuario negó, pregunta qué le gustaría modificar y usa la acción `reversar_paso`.
+            **Si el usuario responde a la confirmación (TAREA = Procesar Confirmación):**
+            a. Si el usuario confirmó, genera un mensaje de éxito y usa la acción `finalizado`.
+            b. Si el usuario negó, informa que el proceso se canceló y usa la acción `finalizado_por_usuario`.
+
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}
@@ -2203,17 +2206,6 @@ def orquestar_chat():
         
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
-        
-        for paso in pasos_ordenados:
-            variable = paso.get('variable_salida')
-            if int(paso.get('required') or 0) == 1 and not estado_actual.get(variable) and len(paso.get('data') or []) == 1:
-                valor_unico = paso['data'][0]
-                id_unico = map_value_to_key(paso, valor_unico)
-                estado_actual[variable] = id_unico
-                print(f"--- Auto-seleccionada opción única para '{variable}': '{id_unico}' ---", flush=True)
-        
-        pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config_con_datos)
-        pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
 
         paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
         coincidencia = None
@@ -2231,10 +2223,30 @@ def orquestar_chat():
             
             if req_data.mensaje_usuario and paso_pendiente:
                 valor_usuario = req_data.mensaje_usuario.strip()
+                tipo_paso = paso_pendiente.get('tipo')
+                
                 opciones_disponibles = paso_pendiente.get('data', []) or []
-                coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
-                if coincidencia: 
-                    print(f"--- Coincidencia por LENGUAJE NATURAL: '{coincidencia}' ---", flush=True)
+                
+                if tipo_paso == 'TEXT':
+                    coincidencia = valor_usuario
+                    print(f"--- Paso de tipo TEXTO. Valor capturado: '{coincidencia}' ---", flush=True)
+
+                elif tipo_paso in ['MULTIPLE', 'API']:
+                    if len(opciones_disponibles) == 1:
+                        palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto', 'adelante']
+                        if any(palabra in valor_usuario.lower() for palabra in palabras_afirmativas):
+                            coincidencia = opciones_disponibles[0]
+                    
+                    if not coincidencia and valor_usuario.isdigit():
+                        indice = int(valor_usuario) - 1
+                        if 0 <= indice < len(opciones_disponibles):
+                            coincidencia = opciones_disponibles[indice]
+                            print(f"--- Coincidencia por NÚMERO de opción: '{coincidencia}' ---", flush=True)
+
+                    if not coincidencia:
+                        coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
+                        if coincidencia: 
+                            print(f"--- Coincidencia por LENGUAJE NATURAL: '{coincidencia}' ---", flush=True)
         
         if coincidencia:
             variable_a_llenar = paso_pendiente.get('variable_salida')
@@ -2242,38 +2254,65 @@ def orquestar_chat():
             estado_actual[variable_a_llenar] = valor_final_para_estado
             print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
             req_data.mensaje_usuario = ""
-            pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config_con_datos)
-            pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
             paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
+        pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
+        pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
+        
+        accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+        
         nombre_tarea_actual = ''
         datos_para_siguiente_accion = []
+        mensaje_para_prompt = req_data.mensaje_usuario
         
-        if paso_pendiente:
-            datos_disponibles = paso_pendiente.get('data') or []
-            if paso_pendiente.get('sin_datos'):
-                nombre_tarea_actual = "Informar error y retroceder"
-                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-            else:
-                nombre_tarea_actual = f"Recolectar dato: {paso_pendiente.get('nombre', 'N/A')}"
-                datos_para_siguiente_accion = datos_disponibles
-        else: 
-            palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'okay', 'okey', 'bueno', 'confirmo', 'correcto', 'confirma', 'afirmativo']
-            palabras_negativas = ['no', 'cancelar', 'cambiar', 'modificar']
-            mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
+        if accion_siguiente_config:
+            datos_disponibles = accion_siguiente_config.get('data') or []
             
-            if any(palabra in mensaje_usuario_norm for palabra in palabras_afirmativas) and req_data.mensaje_usuario:
-                print("--- Confirmación afirmativa detectada. Finalizando flujo. ---", flush=True)
-                return jsonify({
+            if accion_siguiente_config.get('sin_datos'):
+                nombre_tarea_actual = "Informar error y retroceder"
+                nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
+                mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
+                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+            elif len(datos_disponibles) == 1 and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API']:
+                nombre_tarea_actual = "Confirmar opción única"
+                datos_para_siguiente_accion = datos_disponibles
+                mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción disponible es '{datos_disponibles[0]}'. Tu tarea es informar esto al usuario y preguntarle si desea continuar."
+            else:
+                nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
+                datos_para_siguiente_accion = datos_disponibles
+                mensaje_para_prompt = ""
+        else:
+            palabras_negativas = ['no', 'cancelar', 'cancelo', 'anular', 'salir']
+            palabras_afirmativas = ['si', 'sí', 'si confirmo', 'confirmo', 'acepto', 'ok', 'okay', 'okey', 'correcto', 'afirmativo', 'de acuerdo']
+
+            mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
+
+            if any(p in mensaje_usuario_norm for p in palabras_negativas) or mensaje_usuario_norm.startswith('no '):
+                final_response = {
+                    "mensaje_bot": "Entendido, he cancelado el proceso. Si deseas, podemos empezar nuevamente cuando gustes.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado_por_usuario"
+                }
+                print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL (CANCELADO POR USUARIO) ---", flush=True)
+                print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+                print("**************************************************", flush=True)
+                return jsonify(final_response)
+
+            if any(p in mensaje_usuario_norm for p in palabras_afirmativas):
+                print("--- Confirmación afirmativa detectada. Finalizando flujo (API). ---", flush=True)
+                final_response = {
                     "mensaje_bot": "¡Perfecto! Tu cita ha sido confirmada con éxito. Gracias por usar nuestros servicios.",
                     "nuevo_estado": estado_actual,
                     "accion": "finalizado"
-                })
-                
-            elif any(palabra in mensaje_usuario_norm for palabra in palabras_negativas):
-                nombre_tarea_actual = "Procesar Rechazo de Confirmación"
-            else:
-                nombre_tarea_actual = "Finalizar Conversación"
+                }
+                print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+                print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+                print("**************************************************", flush=True)
+                return jsonify(final_response)
+
+            nombre_tarea_actual = "Finalizar Conversación"
+            mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
+
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 
@@ -2286,7 +2325,7 @@ def orquestar_chat():
             nombre_tarea_actual=nombre_tarea_actual,
             estado_json=json.dumps(estado_para_resumen_ia, indent=2, ensure_ascii=False),
             datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
-            mensaje_usuario=req_data.mensaje_usuario
+            mensaje_usuario=mensaje_para_prompt or req_data.mensaje_usuario
         )
 
         response_openai = client.chat.completions.create(

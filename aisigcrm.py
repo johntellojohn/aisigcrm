@@ -2286,37 +2286,14 @@ def orquestar_chat():
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
         else:
-            palabras_negativas = ['no', 'cancelar', 'cancelo', 'anular', 'salir']
-            palabras_afirmativas = ['si', 'sí', 'si confirmo', 'confirmo', 'acepto', 'ok', 'okay', 'okey', 'correcto', 'afirmativo', 'de acuerdo']
-
-            mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
-
-            if any(p in mensaje_usuario_norm for p in palabras_negativas) or mensaje_usuario_norm.startswith('no '):
-                final_response = {
-                    "mensaje_bot": "Entendido, he cancelado el proceso. Si deseas, podemos empezar nuevamente cuando gustes.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado_por_usuario"
-                }
-                print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL (CANCELADO POR USUARIO) ---", flush=True)
-                print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
-                print("**************************************************", flush=True)
-                return jsonify(final_response)
-
-            if any(p in mensaje_usuario_norm for p in palabras_afirmativas):
-                print("--- Confirmación afirmativa detectada. Finalizando flujo (API). ---", flush=True)
-                final_response = {
-                    "mensaje_bot": "¡Perfecto! Tu cita ha sido confirmada con éxito. Gracias por usar nuestros servicios.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado"
-                }
-                print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
-                print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
-                print("**************************************************", flush=True)
-                return jsonify(final_response)
-
-            nombre_tarea_actual = "Finalizar Conversación"
-            mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
-
+            if not req_data.mensaje_usuario.strip():
+                nombre_tarea_actual = "Finalizar Conversación"
+                mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
+                datos_para_siguiente_accion = []
+            else:
+                nombre_tarea_actual = "Procesar Confirmación"
+                mensaje_para_prompt = ""
+                datos_para_siguiente_accion = []
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 

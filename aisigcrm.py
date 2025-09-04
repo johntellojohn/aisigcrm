@@ -2286,14 +2286,32 @@ def orquestar_chat():
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
         else:
-            if not req_data.mensaje_usuario.strip():
-                nombre_tarea_actual = "Finalizar Conversación"
-                mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
-                datos_para_siguiente_accion = []
-            else:
-                nombre_tarea_actual = "Procesar Confirmación"
-                mensaje_para_prompt = ""
-                datos_para_siguiente_accion = []
+            palabras_negativas = ['no', 'cancelar', 'cancelo', 'anular', 'salir', 'no gracias']
+            palabras_afirmativas = ['si', 'sí', 'si confirmo', 'confirmo', 'acepto', 'ok', 'okay', 'okey', 'correcto', 'afirmativo', 'de acuerdo', 'claro', 'adelante']
+
+            mensaje_usuario_norm = unidecode(req_data.mensaje_usuario.lower().strip())
+
+            if any(palabra in mensaje_usuario_norm for palabra in palabras_negativas) or mensaje_usuario_norm.startswith('no '):
+                print("--- Negación detectada por el usuario. Finalizando flujo. ---", flush=True)
+                final_response = {
+                    "mensaje_bot": "Entendido. He cancelado el proceso. Si cambias de opinión, puedes iniciar de nuevo cuando quieras.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado_por_usuario"
+                }
+                return jsonify(final_response)
+
+            if any(palabra in mensaje_usuario_norm for palabra in palabras_afirmativas):
+                print("--- Confirmación afirmativa detectada. Finalizando flujo. ---", flush=True)
+                final_response = {
+                    "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. En breve recibirás una notificación de confirmación. ¡Gracias por usar nuestros servicios!",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado"
+                }
+                return jsonify(final_response)
+
+            nombre_tarea_actual = "Finalizar Conversación"
+            mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
+            datos_para_siguiente_accion = []
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 

@@ -1921,7 +1921,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                                 
                                 paso['sin_datos'] = False if paso.get('data') else True
                                 if paso['sin_datos']:
-                                     paso['error_api'] = 'LISTA_VACIA'
+                                      paso['error_api'] = 'LISTA_VACIA'
                             else:
                                 paso['error_api'] = 'LISTA_VACIA'
                                 print(f"Advertencia: La API para '{paso.get('nombre')}' no devolvió una lista válida o la lista estaba vacía.", flush=True)
@@ -1985,14 +1985,20 @@ def map_value_to_key(paso_config, friendly_value):
     if not paso_config.get('data_key') or not isinstance(paso_config.get('data_key'), list):
         return friendly_value 
 
-    key_field = paso_config.get('key')
-    value_field = paso_config.get('valor')
+    if paso_config.get('data') and isinstance(paso_config.get('data')[0], str):
+        try:
+            idx = paso_config['data_key'].index(friendly_value)
+            if idx < len(paso_config['data']):
+                return paso_config['data'][idx]
+        except (ValueError, IndexError):
+            return friendly_value
 
+    key_field, value_field = paso_config.get('key'), paso_config.get('valor')
     if not key_field or not value_field:
         return friendly_value
 
     for item in paso_config['data_key']:
-        if isinstance(item, dict) and str(item.get(value_field)).strip() == str(friendly_value).strip():
+        if isinstance(item, dict) and str(item.get(value_field)).strip().lower() == str(friendly_value).strip().lower():
             return item.get(key_field)
             
     return friendly_value
@@ -2035,72 +2041,70 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
     Interpreta texto de fecha/hora del usuario y lo compara con una lista de opciones,
     manejando lenguaje natural y varios formatos de hora de forma robusta.
     """
-    if not opciones:
-        return None
+    if not opciones: return None
 
-    if es_paso_de_fecha_o_hora(opciones) and re.match(r'^\d{4}-\d{2}-\d{2}$', str(opciones[0])):
-        meses_es = {
-            'enero': 'january', 'febrero': 'february', 'marzo': 'march', 'abril': 'april',
-            'mayo': 'may', 'junio': 'june', 'julio': 'july', 'agosto': 'august',
-            'septiembre': 'september', 'octubre': 'october', 'noviembre': 'november', 'diciembre': 'december'
-        }
-        mensaje_procesado = mensaje_usuario.lower()
-        for es, en in meses_es.items():
-            mensaje_procesado = mensaje_procesado.replace(es, en)
-        
+    if es_paso_de_fecha_o_hora(opciones):
         try:
-            dt_usuario = parse(mensaje_procesado, fuzzy=True)
-            for opcion in opciones:
-                dt_opcion = parse(opcion)
-                if dt_opcion.date() == dt_usuario.date():
-                    return opcion
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', str(opciones[0])):
+                meses_es = {'enero': 'jan', 'febrero': 'feb', 'marzo': 'mar', 'abril': 'apr', 'mayo': 'may', 'junio': 'jun', 'julio': 'jul', 'agosto': 'aug', 'septiembre': 'sep', 'octubre': 'oct', 'noviembre': 'nov', 'diciembre': 'dec'}
+                msg_proc = mensaje_usuario.lower()
+                for es, en in meses_es.items(): msg_proc = msg_proc.replace(es, en)
+                dt_usuario = parse(msg_proc, fuzzy=True)
+                for opcion in opciones:
+                    if parse(opcion).date() == dt_usuario.date(): return opcion
+            else:
+                dt_usuario = parse(mensaje_usuario.lower(), fuzzy=True)
+                for opcion in opciones:
+                    hora_inicio_opcion = parse(opcion.split('-')[0].strip())
+                    if hora_inicio_opcion.time() == dt_usuario.time(): return opcion
         except (ValueError, ParserError):
-            return None
-        return None
+            pass
 
-    texto = unidecode(mensaje_usuario.lower())
-    texto = re.sub(r'\b(a la|a las|la de las)\b', '', texto).strip()
-    texto = re.sub(r'\b(de la manana|am)\b', 'am', texto)
-    texto = re.sub(r'\b(de la tarde|de la noche|pm)\b', 'pm', texto)
+    mensaje_normalizado = unidecode(mensaje_usuario.lower())
+    palabras_usuario = set(re.findall(r'\b\w+\b', mensaje_normalizado))
     
-    try:
-        hora_usuario = parse(texto, fuzzy_with_tokens=True)[0].time()
-        for opcion in opciones:
-            match_inicio = re.match(r'^\s*(\d{1,2}:\d{2}(:\d{2})?)', opcion)
-            if match_inicio:
-                hora_inicio_opcion = parse(match_inicio.group(1)).time()
-                if hora_usuario == hora_inicio_opcion:
-                    return opcion
-    except (ParserError, ValueError, IndexError):
-        pass
+    stop_words = {'con', 'el', 'la', 'los', 'las', 'de', 'del', 'un', 'una', 'dr', 'doctor', 'a'}
+    palabras_usuario -= stop_words
 
-    valor_normalizado = unidecode(mensaje_usuario.lower())
+    mejor_coincidencia = None
+    max_puntuacion = 0
+
     for opcion in opciones:
         opcion_normalizada = unidecode(str(opcion).lower())
-        if valor_normalizado in opcion_normalizada:
-            return opcion
-            
-    return None
+        palabras_opcion = set(re.findall(r'\b\w+\b', opcion_normalizada))
+        
+        palabras_comunes = palabras_usuario.intersection(palabras_opcion)
+        puntuacion = len(palabras_comunes)
+        
+        if puntuacion > max_puntuacion:
+            max_puntuacion = puntuacion
+            mejor_coincidencia = opcion
+
+    return mejor_coincidencia if max_puntuacion > 0 else None
 
 def crear_estado_para_resumen(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Crea una copia del estado actual y reemplaza los IDs con sus nombres amigables
-    para que la IA pueda generar un resumen legible para el usuario.
+    Crea una copia del estado y reemplaza IDs con nombres amigables.
     """
     estado_resumen = estado_actual.copy()
-
     for paso in pasos_config:
-        if paso.get('data_key') and paso.get('key') and paso.get('valor'):
-            variable_salida = paso.get('variable_salida')
-            id_guardado = estado_actual.get(variable_salida)
-
-            if id_guardado is not None:
+        variable_salida = paso.get('variable_salida')
+        id_guardado = estado_actual.get(variable_salida)
+        if id_guardado is not None:
+            valores_sistema = paso.get('data', [])
+            opciones_completas = paso.get('data_key', [])
+            if isinstance(valores_sistema, list) and isinstance(opciones_completas, list) and len(valores_sistema) == len(opciones_completas):
+                try:
+                    idx = valores_sistema.index(id_guardado)
+                    estado_resumen[variable_salida] = opciones_completas[idx]
+                    continue
+                except (ValueError, IndexError):
+                    pass
+            if paso.get('data_key') and paso.get('key') and paso.get('valor'):
                 for item in paso['data_key']:
                     if isinstance(item, dict) and str(item.get(paso['key'])) == str(id_guardado):
-                        nombre_amigable = item.get(paso['valor'])
-                        estado_resumen[variable_salida] = nombre_amigable
+                        estado_resumen[variable_salida] = item.get(paso['valor'])
                         break
-
     return estado_resumen
 
 @app.route('/api/orquestador_gpt', methods=['POST'])
@@ -2160,11 +2164,7 @@ def orquestar_chat():
     """
     db_connection = None
     try:
-        db_name_from_laravel = request.json.get('db_name')
-        if not db_name_from_laravel:
-            raise ValueError("El parámetro 'db_name' es requerido en la petición desde Laravel.")
-
-        db_generator = get_db_session(database_name=db_name_from_laravel)
+        db_generator = get_db_session(database_name=req_data.db_name)
         db_connection = next(db_generator)
         cursor = db_connection.cursor(dictionary=True)
         
@@ -2174,26 +2174,25 @@ def orquestar_chat():
         sql_query = """
             SELECT adev.nombre, adev.tipo, adev.order, adev.variable_salida, adev.data, adev.required,
                    adev.url, adev.method, adev.parametros_requeridos, adev.lista, adev.valor, adev.key,
-                   av.default_value AS default_value
+                   av.default_value AS default_value, adev.data_key
             FROM auto_detalle_estado_variable AS adev
             LEFT JOIN auto_variables AS av ON adev.variable_id = av.id
             WHERE adev.auto_detalle_id = %s
         """
         cursor.execute(sql_query, (req_data.flujo_id,))
         pasos_config = cursor.fetchall()
-        
-        if not flujo_config:
-            return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
 
-        estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
-        estado_actual = estado_base.copy()
-        estado_actual.update(req_data.estado_actual)
-        
-        pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
-        pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
+        for paso in pasos_config:
+            if paso['tipo'] == 'MULTIPLE' and isinstance(paso['data'], str):
+                paso['data_key'] = [item.strip() for item in paso.get('data_key', '').split(';')] if paso.get('data_key') else []
+                paso['data'] = [item.strip() for item in paso['data'].split(';')]
 
-        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+        estado_actual = req_data.estado_actual.copy()
+        pasos_ordenados = sorted(pasos_config, key=lambda p: int(p.get('order') or 999))
         coincidencia = None
+
+        pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
+        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
 
         if paso_pendiente and req_data.mensaje_usuario:
             palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'adiós', 'chao', 'ya no', 'no gracias']
@@ -2209,49 +2208,32 @@ def orquestar_chat():
             if req_data.mensaje_usuario and paso_pendiente:
                 valor_usuario = req_data.mensaje_usuario.strip()
                 tipo_paso = paso_pendiente.get('tipo')
-                opciones_paso_actual = paso_pendiente.get('data', []) or []
+                opciones_completas = paso_pendiente.get('data_key') or paso_pendiente.get('data', [])
                 
                 if tipo_paso == 'TEXT':
                     coincidencia = valor_usuario
-                    print(f"--- Paso de tipo TEXTO. Valor capturado: '{coincidencia}' ---", flush=True)
-
                 elif tipo_paso in ['MULTIPLE', 'API']:
-                    if len(opciones_paso_actual) == 1:
-                        palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto', 'adelante']
-                        if any(palabra in valor_usuario.lower() for palabra in palabras_afirmativas):
-                            coincidencia = opciones_paso_actual[0]
-                    
-                    if not coincidencia and valor_usuario.isdigit():
+                    if valor_usuario.isdigit():
                         indice = int(valor_usuario) - 1
-                        if 0 <= indice < len(opciones_paso_actual):
-                            coincidencia = opciones_paso_actual[indice]
-                            print(f"--- Coincidencia por NÚMERO de opción: '{coincidencia}' ---", flush=True)
-
+                        if 0 <= indice < len(opciones_completas):
+                            coincidencia = opciones_completas[indice]
                     if not coincidencia:
-                        coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_paso_actual)
-                        if coincidencia: 
-                            print(f"--- Coincidencia por LENGUAJE NATURAL: '{coincidencia}' ---", flush=True)
-        
+                        coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_completas)
+
         if coincidencia:
             variable_a_llenar = paso_pendiente.get('variable_salida')
             valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
             estado_actual[variable_a_llenar] = valor_final_para_estado
             print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
             req_data.mensaje_usuario = ""
-            paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+            pasos_config = llenar_datos_desde_api(estado_actual, pasos_config)
+            paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and (estado_actual.get(p.get('variable_salida')) is None or str(estado_actual.get(p.get('variable_salida'))).strip() == '')), None)
 
-        pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
-        pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
-        accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
-        
-        nombre_tarea_actual = ''
-        datos_para_siguiente_accion = []
-        mensaje_para_prompt = req_data.mensaje_usuario
-        accion_final_forzada = None
+        accion_siguiente_config = paso_pendiente
+        nombre_tarea_actual, datos_para_siguiente_accion, mensaje_para_prompt, accion_final_forzada = '', [], req_data.mensaje_usuario, None
 
         if accion_siguiente_config:
-            datos_disponibles = accion_siguiente_config.get('data') or []
-            
+            datos_disponibles = accion_siguiente_config.get('data_key') or accion_siguiente_config.get('data', [])
             if accion_siguiente_config.get('sin_datos'):
                 nombre_tarea_actual = "Informar error y retroceder"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
@@ -2269,11 +2251,11 @@ def orquestar_chat():
             palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto']
             palabras_negativas = ['no', 'cancelar', 'cambiar']
             
-            if any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_afirmativas):
+            if any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_afirmativas) and req_data.mensaje_usuario:
                 nombre_tarea_actual = "Procesar Confirmación"
-                mensaje_para_prompt = "El usuario ha confirmado la cita. Genera un mensaje de éxito."
+                mensaje_para_prompt = "El usuario ha confirmado la cita. Genera un mensaje de éxito y despedida."
                 accion_final_forzada = "finalizado"
-            elif any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_negativas):
+            elif any(palabra in req_data.mensaje_usuario.lower() for palabra in palabras_negativas) and req_data.mensaje_usuario:
                 nombre_tarea_actual = "Procesar Confirmación"
                 mensaje_para_prompt = "El usuario ha rechazado la confirmación. Pregúntale qué dato le gustaría cambiar."
                 accion_final_forzada = "reversar_paso"
@@ -2282,7 +2264,6 @@ def orquestar_chat():
                 mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
-
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),
             orq_tono=flujo_config.get('orq_tono', ''),

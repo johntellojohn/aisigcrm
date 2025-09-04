@@ -2147,7 +2147,8 @@ def orquestar_chat():
     1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
     2.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato. Si hay una lista de `Datos disponibles`, DEBES mostrarla de forma numerada.
+        # Texto Corregido
+- **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista, de forma numerada. NO inventes, añadas ni modifiques las opciones que se te proporcionan.
         - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
         - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
         - **Si TODOS los datos están completos (TAREA = Finalizar Conversación):**

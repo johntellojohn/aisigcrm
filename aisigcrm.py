@@ -1817,6 +1817,7 @@ class ChatRequest(BaseModel):
     chat_id: str
     mensaje_usuario: str
     estado_actual: dict
+    db_name: str
 
 class ChatResponse(BaseModel):
     mensaje_bot: str

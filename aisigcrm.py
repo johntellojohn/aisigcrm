@@ -2206,7 +2206,7 @@ def orquestar_chat():
         
         for paso in pasos_ordenados:
             variable = paso.get('variable_salida')
-            if int(paso.get('required') or 0) == 1 and not estado_actual.get(variable) and len(paso.get('data', [])) == 1:
+            if int(paso.get('required') or 0) == 1 and not estado_actual.get(variable) and len(paso.get('data') or []) == 1:
                 valor_unico = paso['data'][0]
                 id_unico = map_value_to_key(paso, valor_unico)
                 estado_actual[variable] = id_unico

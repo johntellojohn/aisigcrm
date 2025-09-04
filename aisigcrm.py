@@ -2303,7 +2303,7 @@ def orquestar_chat():
 
             else:
                 nombre_tarea_actual = "Finalizar Conversación"
-                mensaje_para_prompt = "Presenta el resumen completo de la cita y pide confirmación."
+                mensaje_para_prompt = "Presenta el resumen completo y final de la cita."
                 datos_para_siguiente_accion = []
 
         estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)

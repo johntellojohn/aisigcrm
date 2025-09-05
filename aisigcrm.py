@@ -2212,7 +2212,7 @@ def orquestar_chat():
 
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados_actualizados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
-        accion_siguiente_config = next((paso for paso in pasos_ordenados_actualizados if int(p.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+        accion_siguiente_config = next((paso for paso in pasos_ordenados_actualizados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
 
         if not accion_siguiente_config:
             print("--- Todos los pasos completados. Generando respuesta final directa. ---", flush=True)

@@ -2147,14 +2147,13 @@ def orquestar_chat():
     1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
     2.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos (TAREA = Recolectar dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista, de forma numerada con <br>. NO inventes, añadas ni modifiques las opciones que se te proporcionan.
-        - **Si solo hay UNA opción (TAREA = Confirmar opción única):** Informa al usuario cuál es la única opción disponible y pregúntale directamente si desea continuar con esa opción.
-        - **Si hay un error (TAREA = Informar error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar y qué debe hacer (ej. "No encontré sedes disponibles para ese doctor, por favor elige otro").
+        - **Si faltan datos (TAREA = Preguntar por Siguiente Dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista de forma numerada con <br>.
+        - **Si hay un error (TAREA = Informar Error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar.
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}
 
-    **Estado actual de la conversación (IMPORTANTE: Para resúmenes, usa los nombres amigables como 'nombre_sede', no los IDs como 'ID_SEDE'):**
+    **Estado actual de la conversación:**
     {estado_json}
 
     **Datos disponibles (si aplica, para mostrar en listas):**
@@ -2225,30 +2224,18 @@ def orquestar_chat():
                 
                 if tipo_paso == 'TEXT':
                     coincidencia = valor_usuario
-                    print(f"--- Paso de tipo TEXTO. Valor capturado: '{coincidencia}' ---", flush=True)
-
                 elif tipo_paso in ['MULTIPLE', 'API']:
-                    if len(opciones_disponibles) == 1:
-                        palabras_afirmativas = ['si', 'sí', 'claro', 'acepto', 'ok', 'confirmo', 'correcto', 'adelante']
-                        if any(palabra in valor_usuario.lower() for palabra in palabras_afirmativas):
-                            coincidencia = opciones_disponibles[0]
-                    
                     if not coincidencia and valor_usuario.isdigit():
                         indice = int(valor_usuario) - 1
                         if 0 <= indice < len(opciones_disponibles):
                             coincidencia = opciones_disponibles[indice]
-                            print(f"--- Coincidencia por NÚMERO de opción: '{coincidencia}' ---", flush=True)
-
                     if not coincidencia:
                         coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
-                        if coincidencia: 
-                            print(f"--- Coincidencia por LENGUAJE NATURAL: '{coincidencia}' ---", flush=True)
         
         if coincidencia:
             variable_a_llenar = paso_pendiente.get('variable_salida')
             valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
             estado_actual[variable_a_llenar] = valor_final_para_estado
-            print(f"--- Mensaje de usuario PROCESADO. Variable '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
             req_data.mensaje_usuario = ""
             paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
@@ -2257,85 +2244,56 @@ def orquestar_chat():
         
         accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
         
-        nombre_tarea_actual = ''
-        datos_para_siguiente_accion = []
-        mensaje_para_prompt = req_data.mensaje_usuario
-        
         if accion_siguiente_config:
+            nombre_tarea_actual = ''
+            datos_para_siguiente_accion = []
+            mensaje_para_prompt = req_data.mensaje_usuario
             datos_disponibles = accion_siguiente_config.get('data') or []
             
             if accion_siguiente_config.get('sin_datos'):
-                nombre_tarea_actual = "Informar error y retroceder"
+                nombre_tarea_actual = "Informar Error"
                 nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
-                mensaje_para_prompt = f"Contexto Importante: El sistema no encontró opciones disponibles para '{nombre_paso_error}'. Informa al usuario amablemente y dile que necesita elegir una opción diferente en el paso anterior."
+                mensaje_para_prompt = f"Contexto: El sistema no encontró opciones para '{nombre_paso_error}'. Informa al usuario y dile que debe elegir una opción diferente en el paso anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-            elif len(datos_disponibles) == 1 and accion_siguiente_config.get('tipo') in ['MULTIPLE', 'API']:
-                nombre_tarea_actual = "Informar y continuar"
-                datos_para_siguiente_accion = datos_disponibles
-                mensaje_para_prompt = f"Contexto: Para el paso '{accion_siguiente_config.get('nombre')}', la única opción es '{datos_disponibles[0]}'. Tu tarea es INFORMAR al usuario que esta opción ha sido seleccionada automáticamente y luego formular la pregunta para el SIGUIENTE paso requerido."
             else:
-                nombre_tarea_actual = f"Recolectar dato: {accion_siguiente_config.get('nombre', 'N/A')}"
+                nombre_tarea_actual = "Preguntar por Siguiente Dato"
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
-        else:
-            # TAREA: Todos los datos han sido recolectados. Finalizar la conversación directamente.
-            print("--- Todos los pasos completados. Finalizando flujo directamente. ---", flush=True)
-
-            # 1. Crear el resumen de los datos recolectados.
-            estado_resumen = crear_estado_para_resumen(estado_actual, pasos_ordenados)
             
-            # Formatea el resumen en una lista de texto legible.
-            resumen_items = []
-            for key, value in estado_resumen.items():
-                if value: # Solo incluye campos que tienen un valor.
-                    key_legible = key.replace('_', ' ').capitalize()
-                    resumen_items.append(f"- **{key_legible}:** {value}")
-            
-            resumen_texto = "\n".join(resumen_items)
+            estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 
-            # 2. Construir el mensaje final para el usuario.
-            mensaje_final = f"¡Perfecto! Hemos agendado tu cita con los siguientes datos:\n\n{resumen_texto}\n\nGracias por usar nuestros servicios."
+            prompt_final = PLANTILLA_PROMPT_BASE.format(
+                orq_contexto=flujo_config.get('orq_contexto', ''),
+                orq_tono=flujo_config.get('orq_tono', ''),
+                orq_reglas=flujo_config.get('orq_reglas', ''),
+                orq_respuestas=flujo_config.get('orq_respuestas', ''),
+                orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
+                nombre_tarea_actual=nombre_tarea_actual,
+                estado_json=json.dumps(estado_para_resumen_ia, indent=2, ensure_ascii=False),
+                datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
+                mensaje_usuario=mensaje_para_prompt or req_data.mensaje_usuario
+            )
 
-            # 3. Crear la respuesta final y retornarla para terminar el flujo inmediatamente.
+            response_openai = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt_final}],
+                response_format={"type": "json_object"},
+                temperature=0.3
+            )
+            gpt_output = json.loads(response_openai.choices[0].message.content)
+
             final_response = {
-                "mensaje_bot": mensaje_final,
+                "mensaje_bot": gpt_output.get("mensaje"),
+                "nuevo_estado": estado_actual,
+                "accion": gpt_output.get("accion", "indefinida")
+            }
+        else:
+            print("--- Todos los pasos completados. Finalizando flujo. ---", flush=True)
+            final_response = {
+                "mensaje_bot": "Se ha completado el registro.",
                 "nuevo_estado": estado_actual,
                 "accion": "finalizado"
             }
-            
-            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL (SIN LLAMADA A IA) ---", flush=True)
-            print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
-            print("**************************************************", flush=True)
-
-            return jsonify(final_response)
-
-        estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
-
-        prompt_final = PLANTILLA_PROMPT_BASE.format(
-            orq_contexto=flujo_config.get('orq_contexto', ''),
-            orq_tono=flujo_config.get('orq_tono', ''),
-            orq_reglas=flujo_config.get('orq_reglas', ''),
-            orq_respuestas=flujo_config.get('orq_respuestas', ''),
-            orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
-            nombre_tarea_actual=nombre_tarea_actual,
-            estado_json=json.dumps(estado_para_resumen_ia, indent=2, ensure_ascii=False),
-            datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
-            mensaje_usuario=mensaje_para_prompt or req_data.mensaje_usuario
-        )
-
-        response_openai = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt_final}],
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
-        gpt_output = json.loads(response_openai.choices[0].message.content)
-
-        final_response = {
-            "mensaje_bot": gpt_output.get("mensaje"),
-            "nuevo_estado": estado_actual,
-            "accion": gpt_output.get("accion", "indefinida")
-        }
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
         print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)

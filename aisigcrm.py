@@ -2257,7 +2257,7 @@ def orquestar_chat():
                 "accion": gpt_output.get("accion", "continuar")
             }
         else:
-            print("--- Todos los pasos completados. Generando respuesta final con IA. ---", flush=True)
+            print("--- Todos los pasos completados. Generando respuesta final y finalizando. ---", flush=True)
 
             prompt_final = PLANTILLA_PROMPT_BASE.format(
                 orq_contexto=flujo_config.get('orq_contexto', ''),
@@ -2265,10 +2265,10 @@ def orquestar_chat():
                 orq_reglas=flujo_config.get('orq_reglas', ''),
                 orq_respuestas=flujo_config.get('orq_respuestas', ''),
                 orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
-                nombre_tarea_actual="Confirmar Registro Exitoso",
+                nombre_tarea_actual="Finalizar y Confirmar Éxito (SIN PREGUNTAS)",
                 estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
                 datos_json="[]",
-                mensaje_usuario="El usuario ha proporcionado todos los datos. Informa de manera amigable que el proceso ha terminado con éxito."
+                mensaje_usuario="TODOS LOS DATOS HAN SIDO RECOLECTADOS. La tarea está completa. Tu única tarea es generar un mensaje de éxito final. NO HAGAS NINGUNA PREGUNTA. Simplemente informa que el proceso se completó exitosamente con los datos del 'Estado actual' y finaliza la conversación."
             )
 
             response_openai = client.chat.completions.create(

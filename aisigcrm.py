@@ -2251,7 +2251,7 @@ def orquestar_chat():
             'registrar', 'agendar', 'reservar','está bien', 'estoy de acuerdo', 'me parece bien', 'eso es', 'justo', 'seguro', 'sin problema']
             palabras_negativas = ['no', 'nop', 'nope', 'para nada', 'negativo', 'nunca', 'cancelar', 'cancela', 'cancelado', 'detener', 'detén', 'detente', 'parar', 'para', 'terminar', 'finalizar',
             'ya no', 'no más', 'basta', 'incorrecto', 'no es correcto', 'equivocado', 'erróneo', 'no estoy de acuerdo', 'rechazar', 'rechazo',
-            'no quiero', 'no deseo','cambiar', 'modificar', 'mejor no', 'espera', 'un momento']
+            'no quiero', 'no deseo','cambiar', 'modificar', 'mejor no', 'espera', 'un momento', 'no confirmo']
 
             if any(palabra in mensaje_usuario_lower for palabra in palabras_afirmativas):
                 print("--- DIAGNÓSTICO: El usuario ha confirmado la cita. Finalizando flujo. ---", flush=True)

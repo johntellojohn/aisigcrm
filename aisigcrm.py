@@ -2174,7 +2174,7 @@ def orquestar_chat():
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
 
-        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
         coincidencia = None
 
         if paso_pendiente and req_data.mensaje_usuario:
@@ -2185,7 +2185,7 @@ def orquestar_chat():
             palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-                paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+                paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
                 req_data.mensaje_usuario = ""
             
             if req_data.mensaje_usuario and paso_pendiente:
@@ -2213,7 +2213,7 @@ def orquestar_chat():
             req_data.mensaje_usuario = ""
             pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
             pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
-            paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
+            paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
         
         nombre_tarea_actual = ''
         datos_para_siguiente_accion = []
@@ -2230,9 +2230,15 @@ def orquestar_chat():
                 nombre_tarea_actual = "Preguntar por Siguiente Dato"
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
         else:
-            print("--- DIAGNÓSTICO: No se encontraron más pasos pendientes. El flujo debe finalizar. ---", flush=True)
+            print("--- DIAGNÓSTICO: No se encontraron más pasos pendientes válidos. El flujo debe finalizar. ---", flush=True)
             nombre_tarea_actual = "Finalizar Conversación"
-            mensaje_para_prompt = "Todos los datos requeridos han sido recolectados. Genera un mensaje de éxito, confirmando la cita agendada. Incluye un resumen amigable con la especialidad, la fecha y la hora."
+            mensaje_para_prompt = (
+                "IGNORA CUALQUIER MENSAJE ANTERIOR DEL USUARIO. "
+                "La recolección de datos ha terminado. "
+                "Tu ÚNICA TAREA es generar un mensaje de confirmación final y amigable. "
+                "Usa los datos del 'Estado actual de la conversación' para crear un resumen de la cita (especialidad, fecha y hora)."
+            )
+            datos_para_siguiente_accion = []
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),

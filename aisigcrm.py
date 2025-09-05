@@ -2259,7 +2259,7 @@ def orquestar_chat():
         print(json.dumps(final_response.model_dump(), indent=2, ensure_ascii=False), flush=True)
         print("**************************************************", flush=True)
 
-        return jsonify(final_response)
+        return jsonify(final_response.model_dump())
 
     except Exception as e:
         traceback.print_exc()

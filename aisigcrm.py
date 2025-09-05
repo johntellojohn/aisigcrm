@@ -2087,36 +2087,6 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
 
     return mejor_coincidencia if max_puntuacion > 0 else None
 
-def crear_estado_para_resumen(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Crea una copia del estado y reemplaza IDs con nombres amigables para el resumen.
-    """
-    estado_resumen = estado_actual.copy()
-    for paso in pasos_config:
-        variable_salida = paso.get('variable_salida')
-        if not variable_salida:
-            continue
-
-        id_guardado = estado_actual.get(variable_salida)
-        if id_guardado is None:
-            continue
-
-        opciones_completas = paso.get('data_key', [])
-        
-        if not opciones_completas:
-            continue
-            
-        if isinstance(opciones_completas[0], dict):
-            key_field = paso.get('key')
-            value_field = paso.get('valor')
-            if key_field and value_field:
-                for item in opciones_completas:
-                    if isinstance(item, dict) and str(item.get(key_field)) == str(id_guardado):
-                        estado_resumen[variable_salida] = item.get(value_field)
-                        break
-        
-    return estado_resumen
-
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
     try:
@@ -2259,8 +2229,6 @@ def orquestar_chat():
                 nombre_tarea_actual = "Preguntar por Siguiente Dato"
                 datos_para_siguiente_accion = datos_disponibles
                 mensaje_para_prompt = ""
-            
-            estado_para_resumen_ia = crear_estado_para_resumen(estado_actual, pasos_ordenados)
 
             prompt_final = PLANTILLA_PROMPT_BASE.format(
                 orq_contexto=flujo_config.get('orq_contexto', ''),
@@ -2269,7 +2237,7 @@ def orquestar_chat():
                 orq_respuestas=flujo_config.get('orq_respuestas', ''),
                 orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
                 nombre_tarea_actual=nombre_tarea_actual,
-                estado_json=json.dumps(estado_para_resumen_ia, indent=2, ensure_ascii=False),
+                estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
                 datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
                 mensaje_usuario=mensaje_para_prompt or req_data.mensaje_usuario
             )
@@ -2285,12 +2253,33 @@ def orquestar_chat():
             final_response = {
                 "mensaje_bot": gpt_output.get("mensaje"),
                 "nuevo_estado": estado_actual,
-                "accion": gpt_output.get("accion", "indefinida")
+                "accion": gpt_output.get("accion", "continuar")
             }
         else:
-            print("--- Todos los pasos completados. Finalizando flujo. ---", flush=True)
+            print("--- Todos los pasos completados. Generando respuesta final con IA. ---", flush=True)
+
+            prompt_final = PLANTILLA_PROMPT_BASE.format(
+                orq_contexto=flujo_config.get('orq_contexto', ''),
+                orq_tono=flujo_config.get('orq_tono', ''),
+                orq_reglas=flujo_config.get('orq_reglas', ''),
+                orq_respuestas=flujo_config.get('orq_respuestas', ''),
+                orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
+                nombre_tarea_actual="Confirmar Registro Exitoso",
+                estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
+                datos_json="[]",
+                mensaje_usuario="El usuario ha proporcionado todos los datos. Informa de manera amigable que el proceso ha terminado con éxito."
+            )
+
+            response_openai = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt_final}],
+                response_format={"type": "json_object"},
+                temperature=0.3
+            )
+            gpt_output = json.loads(response_openai.choices[0].message.content)
+
             final_response = {
-                "mensaje_bot": "Se ha completado el registro.",
+                "mensaje_bot": gpt_output.get("mensaje", "¡Hemos completado tu solicitud con éxito!"),
                 "nuevo_estado": estado_actual,
                 "accion": "finalizado"
             }

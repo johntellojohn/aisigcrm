@@ -2220,6 +2220,7 @@ def orquestar_chat():
         mensaje_para_prompt = req_data.mensaje_usuario
 
         if paso_pendiente:
+            print(f"--- DIAGNÓSTICO: Siguiente paso pendiente encontrado: '{paso_pendiente.get('nombre')}' (Variable: '{paso_pendiente.get('variable_salida')}') ---", flush=True)
             if paso_pendiente.get('sin_datos'):
                 nombre_tarea_actual = "Informar Error"
                 nombre_paso_error = paso_pendiente.get('nombre', 'el paso anterior')
@@ -2229,8 +2230,9 @@ def orquestar_chat():
                 nombre_tarea_actual = "Preguntar por Siguiente Dato"
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
         else:
+            print("--- DIAGNÓSTICO: No se encontraron más pasos pendientes. El flujo debe finalizar. ---", flush=True)
             nombre_tarea_actual = "Finalizar Conversación"
-            mensaje_para_prompt = "Todos los datos necesarios han sido recopilados. Genera un mensaje de registro exitosa para el usuario."
+            mensaje_para_prompt = "Todos los datos requeridos han sido recolectados. Genera un mensaje de éxito, confirmando la cita agendada. Incluye un resumen amigable con la especialidad, la fecha y la hora."
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),

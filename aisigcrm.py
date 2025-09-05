@@ -2090,6 +2090,7 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
     try:
+        print("--- EJECUTANDO VERSIÓN DE CÓDIGO CORREGIDA (v2) ---", flush=True) 
         print("\n\n**************************************************", flush=True)
         print(" NUEVA PETICIÓN A /api/orquestador_gpt ", flush=True)
         print("**************************************************", flush=True)

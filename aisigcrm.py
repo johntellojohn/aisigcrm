@@ -2256,7 +2256,7 @@ def orquestar_chat():
             accion=accion_final
         )
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
-        print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+        print(json.dumps(final_response.model_dump(), indent=2, ensure_ascii=False), flush=True)
         print("**************************************************", flush=True)
 
         return jsonify(final_response)

@@ -2087,6 +2087,41 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
 
     return mejor_coincidencia if max_puntuacion > 0 else None
 
+def guardar_estado_en_db(db_connection, flujo_id: int, estado_a_guardar: dict):
+    """
+    Toma el estado actual de la conversación y lo persiste en la base de datos,
+    actualizando el campo 'default_value' para cada variable del flujo.
+    """
+    if not db_connection or not db_connection.is_connected():
+        print("--- ADVERTENCIA: No hay conexión a la base de datos para guardar el estado. ---", flush=True)
+        return
+
+    try:
+        cursor = db_connection.cursor()
+        print(f"--- INICIANDO GUARDADO DE ESTADO PARA FLUJO ID: {flujo_id} ---", flush=True)
+
+        for variable_salida, valor in estado_a_guardar.items():
+            valor_a_guardar = valor if valor is not None else ''
+
+            sql_update_query = """
+                UPDATE auto_variables
+                SET default_value = %s
+                WHERE variable = %s AND variable_salida = %s
+            """
+            cursor.execute(sql_update_query, (str(valor_a_guardar), flujo_id, variable_salida))
+            if cursor.rowcount > 0:
+                print(f"  -> Guardado: '{variable_salida}' = '{valor_a_guardar}'", flush=True)
+
+        db_connection.commit()
+        print("--- GUARDADO DE ESTADO COMPLETADO EXITOSAMENTE ---", flush=True)
+
+    except Exception as e:
+        print(f"!!! ERROR AL GUARDAR EL ESTADO EN LA BASE DE DATOS: {str(e)} !!!", flush=True)
+        db_connection.rollback()
+    finally:
+        if cursor:
+            cursor.close()
+
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
     try:
@@ -2180,6 +2215,7 @@ def orquestar_chat():
         if paso_pendiente and req_data.mensaje_usuario:
             palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'adiós', 'chao', 'ya no', 'no gracias']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
+                guardar_estado_en_db(db_connection, req_data.flujo_id, estado_actual)
                 return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
             
             palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar']
@@ -2272,6 +2308,8 @@ def orquestar_chat():
             "nuevo_estado": estado_actual,
             "accion": accion_final
         }
+
+        guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
         print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)

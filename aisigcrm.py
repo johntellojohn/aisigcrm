@@ -2181,7 +2181,7 @@ def orquestar_chat():
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
                 return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
             
-            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar']
+            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar', 'regresarme', 'retroceder', 'cambiar respuesta', 'cambiar mi respuesta', 'cambiar selección', 'cambiar de opción']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
                 paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
@@ -2211,61 +2211,60 @@ def orquestar_chat():
             paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and not estado_actual.get(p.get('variable_salida'))), None)
 
         pasos_config_actualizados = llenar_datos_desde_api(estado_actual, pasos_config)
-        pasos_ordenados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
-        
-        accion_siguiente_config = next((paso for paso in pasos_ordenados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
-        
-        if accion_siguiente_config:
-            nombre_tarea_actual = ''
-            datos_para_siguiente_accion = []
-            mensaje_para_prompt = req_data.mensaje_usuario
-            datos_disponibles = accion_siguiente_config.get('data') or []
-            
-            if accion_siguiente_config.get('sin_datos'):
-                nombre_tarea_actual = "Informar Error"
-                nombre_paso_error = accion_siguiente_config.get('nombre', 'el paso anterior')
-                mensaje_para_prompt = f"Contexto: El sistema no encontró opciones para '{nombre_paso_error}'. Informa al usuario y dile que debe elegir una opción diferente en el paso anterior."
-                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-            else:
-                nombre_tarea_actual = "Preguntar por Siguiente Dato"
-                datos_para_siguiente_accion = datos_disponibles
-                mensaje_para_prompt = ""
+        pasos_ordenados_actualizados = sorted(pasos_config_actualizados, key=lambda p: int(p.get('order') or 999))
+        accion_siguiente_config = next((paso for paso in pasos_ordenados_actualizados if int(p.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
 
-            prompt_final = PLANTILLA_PROMPT_BASE.format(
+        if not accion_siguiente_config:
+            print("--- Todos los pasos completados. Generando respuesta final directa. ---", flush=True)
+            final_response = {
+                "mensaje_bot": "¡Gracias! Hemos completado todos los pasos. Tu cita está siendo procesada.",
+                "nuevo_estado": estado_actual,
+                "accion": "finalizado"
+            }
+            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+            print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+            print("**************************************************", flush=True)
+            return jsonify(final_response)
+
+        mensaje_error_contextual = ""
+        if accion_siguiente_config.get('sin_datos'):
+            print(f"--- DETECTADO: No hay datos para el paso '{accion_siguiente_config.get('nombre')}'. Revirtiendo. ---", flush=True)
+            estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados_actualizados)
+            paso_fallido_nombre = accion_siguiente_config.get('nombre', 'el paso anterior')
+            accion_siguiente_config = next((paso for paso in pasos_ordenados_actualizados if int(paso.get('required') or 0) == 1 and not estado_actual.get(paso.get('variable_salida'))), None)
+            
+            if not accion_siguiente_config:
+                return jsonify({ "mensaje_bot": "Lo siento, ocurrió un error y no podemos continuar.", "accion": "finalizado", "nuevo_estado": estado_actual })
+            
+            mensaje_error_contextual = f"Contexto Adicional Importante: La elección anterior del usuario para '{paso_fallido_nombre}' no produjo resultados. Debes informarle de esto amablemente ANTES de volver a formular la pregunta para la TAREA ACTUAL."
+
+        datos_para_siguiente_accion = accion_siguiente_config.get('data', [])
+        
+        prompt_final = PLANTILLA_PROMPT_BASE.format(
                 orq_contexto=flujo_config.get('orq_contexto', ''),
                 orq_tono=flujo_config.get('orq_tono', ''),
                 orq_reglas=flujo_config.get('orq_reglas', ''),
                 orq_respuestas=flujo_config.get('orq_respuestas', ''),
                 orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
-                nombre_tarea_actual=nombre_tarea_actual,
+                nombre_tarea_actual="Preguntar por Siguiente Dato",
                 estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
                 datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
-                mensaje_usuario=mensaje_para_prompt or req_data.mensaje_usuario
+                mensaje_usuario=mensaje_error_contextual or req_data.mensaje_usuario
             )
 
-            response_openai = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt_final}],
-                response_format={"type": "json_object"},
-                temperature=0.3
-            )
-            gpt_output = json.loads(response_openai.choices[0].message.content)
+        response_openai = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt_final}],
+            response_format={"type": "json_object"},
+            temperature=0.3
+        )
+        gpt_output = json.loads(response_openai.choices[0].message.content)
 
-            final_response = {
-                "mensaje_bot": gpt_output.get("mensaje"),
-                "nuevo_estado": estado_actual,
-                "accion": gpt_output.get("accion", "continuar")
-            }
-        else:
-            print("--- Todos los pasos completados. Generando respuesta final directa. ---", flush=True)
-
-            mensaje_confirmacion = "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios."
-            
-            final_response = {
-                "mensaje_bot": mensaje_confirmacion,
-                "nuevo_estado": estado_actual,
-                "accion": "finalizado"
-            }
+        final_response = {
+            "mensaje_bot": gpt_output.get("mensaje"),
+            "nuevo_estado": estado_actual,
+            "accion": gpt_output.get("accion", "continuar")
+        }
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
         print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)

@@ -2257,30 +2257,12 @@ def orquestar_chat():
                 "accion": gpt_output.get("accion", "continuar")
             }
         else:
-            print("--- Todos los pasos completados. Generando respuesta final y finalizando. ---", flush=True)
+            print("--- Todos los pasos completados. Generando respuesta final directa. ---", flush=True)
 
-            prompt_final = PLANTILLA_PROMPT_BASE.format(
-                orq_contexto=flujo_config.get('orq_contexto', ''),
-                orq_tono=flujo_config.get('orq_tono', ''),
-                orq_reglas=flujo_config.get('orq_reglas', ''),
-                orq_respuestas=flujo_config.get('orq_respuestas', ''),
-                orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
-                nombre_tarea_actual="Finalizar y Confirmar Éxito (SIN PREGUNTAS)",
-                estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
-                datos_json="[]",
-                mensaje_usuario="TODOS LOS DATOS HAN SIDO RECOLECTADOS. La tarea está completa. Tu única tarea es generar un mensaje de éxito final. NO HAGAS NINGUNA PREGUNTA. Simplemente informa que el proceso se completó exitosamente con los datos del 'Estado actual' y finaliza la conversación."
-            )
-
-            response_openai = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt_final}],
-                response_format={"type": "json_object"},
-                temperature=0.3
-            )
-            gpt_output = json.loads(response_openai.choices[0].message.content)
-
+            mensaje_confirmacion = "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios."
+            
             final_response = {
-                "mensaje_bot": gpt_output.get("mensaje", "¡Hemos completado tu solicitud con éxito!"),
+                "mensaje_bot": mensaje_confirmacion,
                 "nuevo_estado": estado_actual,
                 "accion": "finalizado"
             }

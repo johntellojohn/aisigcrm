@@ -2153,9 +2153,11 @@ def orquestar_chat():
     1.  **REVISA EL ESTADO Y LA TAREA:** Analiza el `Estado actual` para saber qué información tienes. Tu `TAREA ACTUAL` te indica qué dato necesitas obtener.
 
     2.  **FORMULA TU RESPUESTA:**
-        - **Si faltan datos (TAREA = Preguntar por Siguiente Dato):** Formula una pregunta clara para obtener el dato que falta. Si se proporciona una lista en `Datos disponibles`, tu respuesta DEBE presentar al usuario ÚNICA Y EXCLUSIVAMENTE las opciones de esa lista de forma numerada con <br>.
-        - **Si hay un error (TAREA = Informar Error):** Comunica el problema al usuario de forma amigable, explicando por qué no se puede continuar.
-        - **Si todo está completo (TAREA = Finalizar Conversación):** Genera un mensaje de resumen y confirmación final.
+        - **TAREA = "Preguntar por Siguiente Dato":** Formula una pregunta clara para obtener el dato que falta. Si hay una lista en `Datos disponibles`, preséntala de forma numerada con <br>.
+        - **TAREA = "Solicitar Confirmación":** Presenta un resumen de la cita y pregunta claramente si el usuario confirma.
+        - **TAREA = "Finalizar Conversación":** Da un mensaje de éxito final.
+        - **TAREA = "Cancelar Proceso":** Da un mensaje de cancelación.
+        - **TAREA = "Informar Error":** Explica el problema al usuario.
 
     **TAREA ACTUAL (Estado del proceso):**
     {nombre_tarea_actual}
@@ -2205,6 +2207,46 @@ def orquestar_chat():
         estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
         estado_actual = estado_base.copy()
         estado_actual.update(req_data.estado_actual)
+
+        if estado_actual.get('confirmacion_pendiente'):
+            mensaje_usuario_lower = req_data.mensaje_usuario.lower().strip()
+            palabras_afirmativas = ['si', 'sí', 'confirmo', 'correcto', 'proceder', 'adelante', 'aceptar', 'ok']
+            palabras_negativas = ['no', 'cancelar', 'detener', 'incorrecto']
+
+            if any(palabra in mensaje_usuario_lower for palabra in palabras_afirmativas):
+                # El usuario confirmó. Procedemos a finalizar.
+                print("--- DIAGNÓSTICO: El usuario ha confirmado la cita. Finalizando flujo. ---", flush=True)
+                estado_actual.pop('confirmacion_pendiente', None) # Limpiar la bandera
+                final_response = {
+                    "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado"
+                }
+                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                return jsonify(final_response)
+
+            elif any(palabra in mensaje_usuario_lower for palabra in palabras_negativas):
+                # El usuario canceló.
+                print("--- DIAGNÓSTICO: El usuario ha cancelado en el paso de confirmación. ---", flush=True)
+                estado_actual.pop('confirmacion_pendiente', None) # Limpiar la bandera
+                final_response = {
+                    "mensaje_bot": "Entendido, he cancelado el proceso. Si cambias de opinión, estoy aquí para ayudarte.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "finalizado_por_usuario"
+                }
+                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                return jsonify(final_response)
+
+            else:
+                # Respuesta ambigua, volver a preguntar.
+                print("--- DIAGNÓSTICO: Respuesta de confirmación ambigua. Volviendo a preguntar. ---", flush=True)
+                final_response = {
+                    "mensaje_bot": "No entendí tu respuesta. Por favor, responde 'sí' para confirmar o 'no' para cancelar.",
+                    "nuevo_estado": estado_actual,
+                    "accion": "continuar"
+                }
+                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                return jsonify(final_response)
         
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
         pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
@@ -2215,7 +2257,7 @@ def orquestar_chat():
         if paso_pendiente and req_data.mensaje_usuario:
             palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'adiós', 'chao', 'ya no', 'no gracias']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
-                guardar_estado_en_db(db_connection, req_data.flujo_id, estado_actual)
+                #guardar_estado_en_db(db_connection, req_data.flujo_id, estado_actual)
                 return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
             
             palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar']
@@ -2266,13 +2308,13 @@ def orquestar_chat():
                 nombre_tarea_actual = "Preguntar por Siguiente Dato"
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
         else:
-            print("--- DIAGNÓSTICO: No se encontraron más pasos pendientes válidos. El flujo debe finalizar. ---", flush=True)
-            nombre_tarea_actual = "Finalizar Conversación"
+            print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)
+            nombre_tarea_actual = "Solicitar Confirmación"
+            estado_actual['confirmacion_pendiente'] = True # ¡Activamos la bandera!
             mensaje_para_prompt = (
-                "IGNORA CUALQUIER MENSAJE ANTERIOR DEL USUARIO. "
                 "La recolección de datos ha terminado. "
-                "Tu ÚNICA TAREA es generar un mensaje de confirmación final y amigable. "
-                "Usa los datos del 'Estado actual de la conversación' para crear un resumen de la cita (especialidad, fecha y hora)."
+                "Genera un resumen amigable de la cita con los datos del 'Estado actual' "
+                "y pregunta al usuario si desea confirmar (por ejemplo, '¿Es todo correcto?')."
             )
             datos_para_siguiente_accion = []
 
@@ -2309,7 +2351,7 @@ def orquestar_chat():
             "accion": accion_final
         }
 
-        guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+        #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
         print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)

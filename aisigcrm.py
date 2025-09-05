@@ -2122,6 +2122,40 @@ def guardar_estado_en_db(db_connection, flujo_id: int, estado_a_guardar: dict):
         if cursor:
             cursor.close()
 
+def traducir_variable_a_texto_humano(nombre_variable: str) -> str:
+    """
+    Usa una llamada rápida a la IA para convertir un nombre de variable
+    en un texto legible para humanos.
+    Ej: 'consultar_doctor' -> 'consultar un doctor'.
+    """
+    if ' ' in nombre_variable or '_' not in nombre_variable:
+        return nombre_variable
+
+    PROMPT_TRADUCTOR = f"""
+    Convierte el siguiente nombre de variable de programación a una frase corta, natural y en español para un usuario.
+    - No uses mayúsculas.
+    - Debe ser una acción o un concepto.
+    - Responde únicamente con la frase convertida, sin explicaciones.
+
+    Variable: "{nombre_variable}"
+    Frase:
+    """
+    try:
+        print(f"--- Traduciendo variable '{nombre_variable}' para el usuario... ---", flush=True)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": PROMPT_TRADUCTOR}],
+            temperature=0.1,
+            max_tokens=20
+        )
+        texto_traducido = response.choices[0].message.content.strip().lower()
+        texto_traducido = texto_traducido.replace('"', '').replace("'", '')
+        print(f"--- Resultado: '{texto_traducido}' ---", flush=True)
+        return texto_traducido
+    except Exception as e:
+        print(f"!!! ERROR al traducir variable: {e}. Usando fallback. !!!", flush=True)
+        return nombre_variable.replace('_', ' ')
+
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
     try:
@@ -2138,6 +2172,8 @@ def orquestar_chat():
     PLANTILLA_PROMPT_BASE = """
     # CONTEXTO Y PERSONALIDAD
     {orq_contexto}
+    Tu misión es ayudar al usuario a completar un proceso paso a paso. En tu interacción inicial, menciona amablemente que para hacer el proceso más rápido y efectivo, es ideal que sus respuestas sean directas (por ejemplo, eligiendo el número de una opción o escribiendo directamente el dato solicitado).
+    ---
 
     # TONO DE VOZ
     {orq_tono}
@@ -2210,42 +2246,43 @@ def orquestar_chat():
 
         if estado_actual.get('confirmacion_pendiente'):
             mensaje_usuario_lower = req_data.mensaje_usuario.lower().strip()
-            palabras_afirmativas = ['si', 'sí', 'confirmo', 'correcto', 'proceder', 'adelante', 'aceptar', 'ok']
-            palabras_negativas = ['no', 'cancelar', 'detener', 'incorrecto']
+            palabras_afirmativas = ['si', 'sí', 'sip', 'sipi', 'ok', 'okay', 'okey', 'dale', 'va', 'claro', 'por supuesto', 'desde luego','confirmo', 'confirmado', 'afirmativo', 'correcto', 'exacto', 'así es', 'de acuerdo', 'entendido',
+            'comprendido', 'copiado', 'perfecto', 'excelente', 'genial', 'súper', 'super','bueno', 'bien', 'muy bien', 'acepto', 'aceptar', 'proceder', 'adelante', 'continuar', 'continua', 'continúa', 'seguir', 'hágale', 'hacerlo',
+            'registrar', 'agendar', 'reservar','está bien', 'estoy de acuerdo', 'me parece bien', 'eso es', 'justo', 'seguro', 'sin problema']
+            palabras_negativas = ['no', 'nop', 'nope', 'para nada', 'negativo', 'nunca', 'cancelar', 'cancela', 'cancelado', 'detener', 'detén', 'detente', 'parar', 'para', 'terminar', 'finalizar',
+            'ya no', 'no más', 'basta', 'incorrecto', 'no es correcto', 'equivocado', 'erróneo', 'no estoy de acuerdo', 'rechazar', 'rechazo',
+            'no quiero', 'no deseo','cambiar', 'modificar', 'mejor no', 'espera', 'un momento']
 
             if any(palabra in mensaje_usuario_lower for palabra in palabras_afirmativas):
-                # El usuario confirmó. Procedemos a finalizar.
                 print("--- DIAGNÓSTICO: El usuario ha confirmado la cita. Finalizando flujo. ---", flush=True)
-                estado_actual.pop('confirmacion_pendiente', None) # Limpiar la bandera
+                estado_actual.pop('confirmacion_pendiente', None)
                 final_response = {
                     "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios.",
                     "nuevo_estado": estado_actual,
                     "accion": "finalizado"
                 }
-                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
                 return jsonify(final_response)
 
             elif any(palabra in mensaje_usuario_lower for palabra in palabras_negativas):
-                # El usuario canceló.
                 print("--- DIAGNÓSTICO: El usuario ha cancelado en el paso de confirmación. ---", flush=True)
-                estado_actual.pop('confirmacion_pendiente', None) # Limpiar la bandera
+                estado_actual.pop('confirmacion_pendiente', None)
                 final_response = {
                     "mensaje_bot": "Entendido, he cancelado el proceso. Si cambias de opinión, estoy aquí para ayudarte.",
                     "nuevo_estado": estado_actual,
                     "accion": "finalizado_por_usuario"
                 }
-                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
                 return jsonify(final_response)
 
             else:
-                # Respuesta ambigua, volver a preguntar.
                 print("--- DIAGNÓSTICO: Respuesta de confirmación ambigua. Volviendo a preguntar. ---", flush=True)
                 final_response = {
                     "mensaje_bot": "No entendí tu respuesta. Por favor, responde 'sí' para confirmar o 'no' para cancelar.",
                     "nuevo_estado": estado_actual,
                     "accion": "continuar"
                 }
-                guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
                 return jsonify(final_response)
         
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
@@ -2255,12 +2292,14 @@ def orquestar_chat():
         coincidencia = None
 
         if paso_pendiente and req_data.mensaje_usuario:
-            palabras_clave_finalizar = ['terminar', 'finalizar', 'cancelar', 'salir', 'adios', 'adiós', 'chao', 'ya no', 'no gracias']
+            palabras_clave_finalizar = ['terminar', 'finalizar', 'acabar', 'concluir', 'terminemos', 'acabemos', 'cancelar', 'cancela', 'anular', 'descartar', 'ya no', 'no más', 'no mas', 'olvídalo',
+            'déjalo así', 'no, gracias', 'no gracias','salir', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye','basta', 'detener', 'parar', 'alto']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
                 #guardar_estado_en_db(db_connection, req_data.flujo_id, estado_actual)
                 return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
             
-            palabras_clave_retroceso = ['atras', 'volver', 'cambiar', 'elegir otro', 'elegir otra', 'anterior', 'regresar']
+            palabras_clave_retroceso = ['atrás', 'volver', 'regresar', 'retroceder', 'devolverme','cambiar', 'modificar', 'corregir', 'editar', 'otro', 'otra',
+            'elegir otro', 'elegir otra', 'quiero otro', 'quiero otra','me equivoqué', 'error', 'anterior', 'el paso anterior', 'la opción anterior', 'lo de antes', 'dejame volver', 'déjame volver']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
                 paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
@@ -2302,7 +2341,8 @@ def orquestar_chat():
             if paso_pendiente.get('sin_datos'):
                 nombre_tarea_actual = "Informar Error"
                 nombre_paso_error = paso_pendiente.get('nombre', 'el paso anterior')
-                mensaje_para_prompt = f"Contexto de error: El sistema no encontró opciones para '{nombre_paso_error}'. Informa al usuario amablemente y sugiere que intente de nuevo o cambie una opción anterior."
+                nombre_paso_amigable = traducir_variable_a_texto_humano(nombre_paso_error)
+                mensaje_para_prompt = f"Contexto de error: El sistema no encontró opciones para '{nombre_paso_amigable}'. Informa al usuario amablemente y sugiere que intente de nuevo o cambie una opción anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
             else:
                 nombre_tarea_actual = "Preguntar por Siguiente Dato"
@@ -2310,7 +2350,7 @@ def orquestar_chat():
         else:
             print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)
             nombre_tarea_actual = "Solicitar Confirmación"
-            estado_actual['confirmacion_pendiente'] = True # ¡Activamos la bandera!
+            estado_actual['confirmacion_pendiente'] = True
             mensaje_para_prompt = (
                 "La recolección de datos ha terminado. "
                 "Genera un resumen amigable de la cita con los datos del 'Estado actual' "

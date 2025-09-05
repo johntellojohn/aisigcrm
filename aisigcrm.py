@@ -2106,7 +2106,7 @@ def guardar_estado_en_db(db_connection, flujo_id: int, estado_a_guardar: dict):
             sql_update_query = """
                 UPDATE auto_variables
                 SET default_value = %s
-                WHERE variable = %s AND variable_salida = %s
+                WHERE id = (SELECT variable_id FROM auto_detalle_estado_variable WHERE variable_salida = %s)
             """
             cursor.execute(sql_update_query, (str(valor_a_guardar), flujo_id, variable_salida))
             if cursor.rowcount > 0:

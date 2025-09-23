@@ -241,3 +241,82 @@
 * Implementar algúna medida de seguridad ya que no hay autenticación ni validación de entrada y sería bueno de aplicarlo.
 * Si existe en el futuro errores por el tamaño del archivo pdf que se desea subir procesar en /api/uploadPdfChat, se sugiere aplicar el siguiente modelo:  https://ai.google.dev/gemini-api/docs/document-processing?hl=en&authuser=2&lang=python 
 * Para el /api/uploadPdfChat, se optó por utilizar un método híbrido, extraer la descripción en lenguaje natural de cada imagen y vectorizarla como texto, y usar el modelo CLIP para generar embeddings visuales de las imagenes y almacenarlos en Pinecone (soporta embeddings multimodales).
+
+* @app.route('/api/analizardoc', methods=['POST']): Analiza un documento (PDF o imagen) desde una URL a partir de una pregunta o instrucción. Extrae la información solicitada en un formato JSON estructurado y, además, genera una respuesta conversacional que resume los hallazgos.
+*Entrada:* {
+        "file_url": "[string]",     // URL pública del archivo PDF o imagen (png, jpg, etc.).
+        "prompt": "[string]"        // La pregunta o instrucción sobre qué información extraer.
+    }
+*Salida Esperada:*
+    {
+        "structured_data": {        // El JSON con la información extraída según el prompt.
+            "campo_extraido_1": "valor1",
+            "campo_extraido_2": "valor2"
+        },
+        "conversational_response": "[string]" // Una respuesta en lenguaje natural resumiendo los datos.
+    }
+
+---
+* @app.route('/api/orquestador_gpt', methods=['POST']): Gestiona un flujo de conversación multi-paso (ej. agendamiento de citas). Mantiene el estado de la conversación, obtiene datos de APIs externas si es necesario, y usa un LLM para formular la siguiente pregunta al usuario de manera inteligente.
+*Entrada:* {
+        "flujo_id": [int],          // ID del flujo de conversación a ejecutar (desde la base de datos).
+        "chat_id": "[string]",      // Identificador único para la sesión de chat.
+        "mensaje_usuario": "[string]", // La respuesta más reciente del usuario.
+        "estado_actual": {},        // Un objeto JSON con los datos recolectados hasta el momento.
+        "db_name": "[string]"       // Nombre de la base de datos a la que debe conectarse el orquestador.
+    }
+*Salida Esperada:*
+    {
+        "mensaje_bot": "[string]",      // El siguiente mensaje o pregunta para el usuario.
+        "nuevo_estado": {               // El estado de la conversación actualizado con la última respuesta.
+            "variable1": "valor1",
+            "variable2": "valor2"
+        },
+        "accion": "[string]"            // Una acción para el frontend (ej: "finalizado", "reversar_paso").
+    }
+
+---
+* @app.route('/api/transcribir_voz_a_texto', methods=['POST']): Recibe un archivo de audio y utiliza el modelo Whisper de OpenAI para convertir el habla en texto. Devuelve únicamente la transcripción.
+*Entrada (form-data):* - **KEY:** `archivo_audio`
+    - **VALUE:** (Archivo de audio, ej: `audio.ogg`, `audio.mp3`)
+*Salida Esperada:*
+    {
+        "transcripcion": "[string]"     // El texto extraído del archivo de audio.
+    }
+
+---
+* @app.route('/api/inscribir_voz', methods=['POST']): Registra la voz de un usuario creando un perfil de voz robusto. Requiere múltiples archivos de audio para generar una "huella de voz" promediada, lo que aumenta significativamente la precisión.
+*Entrada (form-data):* - **KEY:** `db_name`, **VALUE:** `[string]`
+    - **KEY:** `user_id`, **VALUE:** `[string]`
+    - **KEY:** `nombre_usuario`, **VALUE:** `[string]`
+    - **KEY:** `archivos_audio`, **VALUE:** (Primer archivo de audio)
+    - **KEY:** `archivos_audio`, **VALUE:** (Segundo archivo de audio)
+    - **KEY:** `archivos_audio`, **VALUE:** (Tercer archivo de audio, y así sucesivamente...)
+*Salida Esperada:*
+    {
+        "status": "exito",
+        "mensaje": "La voz del usuario '[nombre_usuario]' ha sido registrada con un perfil de voz mejorado."
+    }
+
+---
+* @app.route('/api/identificar_hablante', methods=['POST']): Compara un archivo de audio con las huellas de voz registradas en la base de datos para identificar a quién pertenece la voz.
+*Entrada (form-data):* - **KEY:** `db_name`, **VALUE:** `[string]`
+    - **KEY:** `archivo_audio`, **VALUE:** (Archivo de audio a identificar)
+*Salida Esperada:*
+    {
+        "hablante_identificado": "[string]", // Nombre del usuario reconocido o "desconocido".
+        "confianza": [float]                 // Puntuación de similitud (entre -1.0 y 1.0).
+    }
+
+* @app.route('/api/analizar_emocion', methods=['POST']): Analiza un archivo de audio para detectar la emoción predominante en la voz. Devuelve una alerta binaria (0 para estable, 1 para inestable) si la emoción detectada corresponde a miedo, ira o disgusto.
+*Entrada (form-data):*
+- **KEY:** `archivo_audio`
+- **VALUE:** (Archivo de audio, ej: `voz_cliente.wav`)
+*Salida Esperada:*
+    {
+        "alerta": 1,
+        "mensaje": "Emocion de voz inestable. PRECAUCION",
+        "emocion_detectada": "angry",
+        "confianza": 0.987
+    }
+**Nota:** El campo `alerta` será `0` para emociones estables (como 'happy', 'sad', 'neutral') y `1` para emociones de precaución ('fear', 'angry', 'disgust').

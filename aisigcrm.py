@@ -40,6 +40,14 @@ from pydantic import BaseModel
 from typing import Dict, Any, List
 from dateutil.parser import parse
 from datetime import time
+import torch
+from transformers import pipeline
+import logging
+from speechbrain.inference.speaker import SpeakerRecognition
+import soundfile as sf
+import torchaudio
+import librosa
+import torch.nn.functional as F
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -55,6 +63,60 @@ pc = Pinecone(os.getenv('PINECONE_API_KEY'))
 
 
 app = Flask(__name__)
+
+# --- Carga de Modelos de IA para Voz ---
+
+logging.basicConfig(level=logging.INFO)
+logger = app.logger 
+
+# 1. Detección de Hardware (GPU/CPU)
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+logger.info(f"Usando dispositivo general para IA de Voz: {device}")
+
+# 2. Carga del Modelo de Transcripción (Whisper)
+pipe_transcribe = None
+try:
+    logger.info("Cargando modelo de transcripción Whisper...")
+    pipe_transcribe = pipeline(
+        "automatic-speech-recognition",
+        model="openai/whisper-small",
+        torch_dtype=torch_dtype,
+        device=device,
+    )
+    logger.info("Modelo Whisper cargado exitosamente.")
+except Exception as e:
+    logger.error(f"Error al cargar el modelo Whisper: {e}")
+
+# 3. Carga del Modelo de Identificación de Hablante (SpeechBrain Encoder)
+encoder_model = None
+try:
+    logger.info("Cargando modelo de identificación de hablante SpeechBrain...")
+    from speechbrain.inference.speaker import EncoderClassifier 
+    encoder_model = EncoderClassifier.from_hparams(
+        source="speechbrain/spkrec-ecapa-voxceleb",
+        savedir="pretrained_models/spkrec-ecapa-voxceleb",
+        run_opts={"device": device}
+    )
+    logger.info("Modelo SpeechBrain Encoder cargado exitosamente.")
+except Exception as e:
+    logger.error(f"Error al cargar el modelo SpeechBrain Encoder: {e}")
+
+# 4. Carga del Modelo de Reconocimiento de Emociones (SER) - Método Manual con MSP-Dim
+emotion_feature_extractor = None
+emotion_model = None
+try:
+    logger.info("Cargando modelo de emociones por dimensiones (MSP-Dim)...")
+    from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+    
+    model_name = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
+    
+    emotion_feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
+    emotion_model = AutoModelForAudioClassification.from_pretrained(model_name).to(device)
+    
+    logger.info("Modelo MSP-Dim cargado exitosamente.")
+except Exception as e:
+    logger.error(f"Error al cargar el modelo MSP-Dim: {e}")
 
 
 ############
@@ -2317,6 +2379,299 @@ def orquestar_chat():
         if db_connection and db_connection.is_connected():
             cursor.close()
             db_connection.close()
+
+@app.route('/api/transcribir_voz_a_texto', methods=['POST'])
+def transcribir_audio():
+    """
+    Recibe un archivo de audio y devuelve únicamente su transcripción.
+    """
+    if not pipe_transcribe:
+        return jsonify({"error": "El modelo de transcripción no está disponible."}), 503
+
+    if 'archivo_audio' not in request.files:
+        return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
+
+    archivo = request.files['archivo_audio']
+    
+    if archivo.filename == '':
+        return jsonify({"error": "No se seleccionó ningún archivo."}), 400
+
+    try:
+        contenido_audio = archivo.read()
+        logger.info(f"Whisper: Recibido archivo para transcribir: {archivo.filename}")
+        
+        resultado = pipe_transcribe(
+            contenido_audio,
+            generate_kwargs={"language": "spanish", "task": "transcribe"},
+        )
+        texto_transcrito = resultado["text"].strip()
+        logger.info("Transcripción completada.")
+        
+        return jsonify({"transcripcion": texto_transcrito})
+
+    except Exception as e:
+        logger.error(f"Error durante la transcripción: {e}")
+        return jsonify({"error": "No se pudo procesar el archivo de audio."}), 500
+
+def get_db_connection_for_voice(db_name):
+    """Crea una conexión a la DB especificada para las operaciones de voz."""
+    try:
+        conn = mysql.connector.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USERNAME"),
+            password=os.getenv("DB_PASSWORD"),
+            database=db_name
+        )
+        if conn.is_connected():
+            return conn
+    except mysql.connector.Error as e:
+        logger.error(f"Error al conectar a MySQL DB '{db_name}': {e}")
+        return None
+
+def inicializar_tabla_voces(db_name):
+    """Asegura que la tabla para guardar las huellas de voz exista en la DB especificada."""
+    conn = get_db_connection_for_voice(db_name)
+    if not conn:
+        raise mysql.connector.Error("No se pudo conectar a la base de datos para inicializar la tabla.")
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS huellas_voz (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL UNIQUE,
+                nombre_usuario VARCHAR(255) NOT NULL,
+                huella_voz JSON NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        logger.info(f"Tabla 'huellas_voz' verificada/creada en la base de datos '{db_name}'.")
+    except mysql.connector.Error as e:
+        logger.error(f"Error al crear la tabla 'huellas_voz': {e}")
+        raise
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+
+@app.route('/api/inscribir_voz', methods=['POST'])
+def inscribir_voz():
+    """
+    Registra una 'huella de voz' PROMEDIADA de un usuario a partir de MÚLTIPLES archivos de audio.
+    Esto crea un perfil de voz mucho más robusto y preciso.
+    """
+    if not encoder_model:
+        return jsonify({"error": "El modelo de identificación no está disponible."}), 503
+
+    db_name = request.form.get('db_name')
+    user_id = request.form.get('user_id')
+    nombre_usuario = request.form.get('nombre_usuario')
+    
+    if not db_name or not user_id or not nombre_usuario:
+        return jsonify({"error": "Se requieren los campos 'db_name', 'user_id' y 'nombre_usuario'."}), 400
+
+    archivos_audio = request.files.getlist('archivos_audio') 
+
+    if not archivos_audio or len(archivos_audio) < 3:
+        return jsonify({"error": "Se requieren al menos 3 archivos de audio para una inscripción robusta. Utilice la clave 'archivos_audio'."}), 400
+
+    lista_de_huellas = []
+    temp_files = []
+
+    try:
+        inicializar_tabla_voces(db_name)
+                
+        for archivo in archivos_audio:
+            temp_filename = f"temp_{archivo.filename}"
+            archivo.save(temp_filename)
+            temp_files.append(temp_filename)
+
+            signal, _ = librosa.load(temp_filename, sr=16000)
+            signal_tensor = torch.tensor(signal).unsqueeze(0).to(device)
+            huella_tensor = encoder_model.encode_batch(signal_tensor)
+            
+            lista_de_huellas.append(huella_tensor)
+
+        if lista_de_huellas:
+            huellas_apiladas = torch.stack(lista_de_huellas)
+            huella_promediada_tensor = torch.mean(huellas_apiladas, dim=0)
+            
+            huella_promediada_lista = huella_promediada_tensor.squeeze().tolist()
+        else:
+            return jsonify({"error": "No se pudieron procesar los archivos de audio para generar huellas."}), 500
+
+        conn = get_db_connection_for_voice(db_name)
+        if not conn:
+            return jsonify({"error": "No se pudo conectar a la base de datos especificada."}), 500
+            
+        cursor = conn.cursor()
+        query = """
+            INSERT INTO huellas_voz (user_id, nombre_usuario, huella_voz)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE nombre_usuario = %s, huella_voz = %s
+        """
+        cursor.execute(query, (user_id, nombre_usuario, json.dumps(huella_promediada_lista), nombre_usuario, json.dumps(huella_promediada_lista)))
+        conn.commit()
+        
+        logger.info(f"Voz del usuario '{nombre_usuario}' (ID: {user_id}) registrada con una huella promediada en DB '{db_name}'.")
+        return jsonify({
+            "status": "exito",
+            "mensaje": f"La voz del usuario '{nombre_usuario}' ha sido registrada con un perfil de voz mejorado."
+        })
+        
+    except Exception as e:
+        logger.error(f"Error al procesar el audio para inscripción promediada: {e}")
+        return jsonify({"error": f"No se pudo procesar el audio: {str(e)}"}), 500
+    finally:
+        for f in temp_files:
+            if os.path.exists(f):
+                os.remove(f)
+
+@app.route('/api/identificar_hablante', methods=['POST'])
+def identificar_hablante():
+    """Identifica a un hablante comparando su voz con las huellas en una DB."""
+    if not encoder_model:
+        return jsonify({"error": "El modelo de identificación no está disponible."}), 503
+
+    db_name = request.form.get('db_name')
+    if not db_name:
+        return jsonify({"error": "Se requiere el campo 'db_name'."}), 400
+        
+    if 'archivo_audio' not in request.files:
+        return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
+
+    archivo = request.files['archivo_audio']
+    temp_filename = f"temp_{archivo.filename}"
+    archivo.save(temp_filename)
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection_for_voice(db_name)
+        if not conn:
+            return jsonify({"error": "No se pudo conectar a la base de datos especificada."}), 500
+
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT user_id, nombre_usuario, huella_voz FROM huellas_voz")
+        huellas_registradas = cursor.fetchall()
+        
+        if not huellas_registradas:
+            return jsonify({"hablante_identificado": "desconocido", "confianza": 0.0, "detalle": "No hay usuarios inscritos en la base de datos."})
+
+        signal, sample_rate = librosa.load(temp_filename, sr=16000)
+        
+        signal_tensor = torch.tensor(signal)
+        
+        signal_tensor = signal_tensor.unsqueeze(0).to(device)
+        
+        huella_actual_tensor = encoder_model.encode_batch(signal_tensor)
+        
+        huella_actual_tensor = huella_actual_tensor.squeeze()
+        
+        mejor_coincidencia_score = -1
+        mejor_coincidencia_nombre = "desconocido"
+        
+        UMBRAL_DE_SIMILITUD = 0.75 
+
+        for registro in huellas_registradas:
+            huella_guardada_lista = json.loads(registro['huella_voz'])
+            huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
+            
+            score = F.cosine_similarity(huella_actual_tensor.unsqueeze(0), huella_guardada_tensor.unsqueeze(0)).item()
+            
+            if score > mejor_coincidencia_score:
+                mejor_coincidencia_score = score
+                mejor_coincidencia_nombre = registro['nombre_usuario']
+
+        if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
+            mejor_coincidencia_nombre = "desconocido"
+
+        logger.info(f"Identificación completada. Mejor coincidencia: {mejor_coincidencia_nombre} con score: {mejor_coincidencia_score:.2f}")
+        
+        return jsonify({
+            "hablante_identificado": mejor_coincidencia_nombre,
+            "confianza": round(mejor_coincidencia_score, 2)
+        })
+
+    except Exception as e:
+        logger.error(f"Error durante la identificación: {e}")
+        return jsonify({"error": f"No se pudo procesar el audio para identificación: {str(e)}"}), 500
+    finally:
+        if cursor: cursor.close()
+        if conn and conn.is_connected(): conn.close()
+        if os.path.exists(temp_filename): os.remove(temp_filename)
+
+@app.route('/api/analizar_emocion', methods=['POST'])
+def analizar_emocion():
+    if not emotion_model or not emotion_feature_extractor:
+        return jsonify({"error": "El modelo de reconocimiento de emociones no está disponible."}), 503
+
+    if 'archivo_audio' not in request.files:
+        return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
+
+    archivo = request.files['archivo_audio']
+    if archivo.filename == '':
+        return jsonify({"error": "No se seleccionó ningún archivo."}), 400
+
+    temp_filename = f"temp_emotion_{archivo.filename}"
+    archivo.save(temp_filename)
+
+    try:
+        logger.info(f"Analizando emociones para el archivo: {archivo.filename}")
+
+        signal, sample_rate = librosa.load(temp_filename, sr=16000)
+        inputs = emotion_feature_extractor(signal, sampling_rate=16000, return_tensors="pt", padding=True)
+        inputs = {key: inputs[key].to(device) for key in inputs}
+        with torch.no_grad():
+            logits = emotion_model(**inputs).logits
+        scores = logits.detach().cpu().numpy()[0]
+        labels = emotion_model.config.id2label
+
+        scores_dict = {labels[i].lower(): float(scores[i]) for i in range(len(labels))}
+        logger.info(f"Puntuaciones del Modelo (dimensiones): {scores_dict}")
+
+        # --- Lógica de Clasificación Binaria (Estable vs. Inestable) ---
+        # Se define un umbral único. Si el valor absoluto de cualquier dimensión
+        # lo supera, la voz se considera "Inestable".
+
+        alerta_code = 0
+        emocion_final = "Estable"
+
+        arousal = scores_dict.get('arousal', 0)
+        valence = scores_dict.get('valence', 0)
+        dominance = scores_dict.get('dominance', 0)
+
+        # Umbral de inestabilidad calibrado según los logs.
+        # Un valor más alto de este umbral hará al sistema menos sensible.
+        UMBRAL_DE_INESTABILIDAD = 0.015
+
+        # Comprobamos si alguna dimensión se sale de la "zona de estabilidad"
+        if (abs(arousal) > UMBRAL_DE_INESTABILIDAD or
+            abs(valence) > UMBRAL_DE_INESTABILIDAD or
+            abs(dominance) > UMBRAL_DE_INESTABILIDAD):
+            
+            emocion_final = "Inestable"
+            alerta_code = 1
+        
+        mensaje = "Se detectó una posible inestabilidad en la voz." if alerta_code == 1 else "Voz estable detectada."
+
+        logger.info(f"Clasificación Final: {emocion_final}, Alerta: {alerta_code}")
+
+        return jsonify({
+            "alerta": alerta_code,
+            "mensaje": mensaje,
+            "emocion_detectada": emocion_final,
+            "dimensiones": scores_dict
+        })
+
+    except Exception as e:
+        logger.error(f"Error durante el análisis de emoción: {e}")
+        traceback.print_exc()
+        return jsonify({"error": "No se pudo procesar el archivo de audio para análisis de emoción."}), 500
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
 
 ###############
 # ip and port #

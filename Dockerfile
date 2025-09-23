@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-spa \
     tesseract-ocr-eng \
+    ffmpeg \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/* # Clean up apt cache
 
 # Exponer el puerto que usa la aplicación

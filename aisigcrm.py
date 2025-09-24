@@ -2183,6 +2183,12 @@ def orquestar_chat():
     ---
     # EJEMPLOS DE RESPUESTAS Y GUÍA DE ESTILO
     {orq_respuestas}
+
+    ---
+    # REGLAS DE COMPORTAMIENTO CRÍTICAS
+    1.  **TAREA EXCLUSIVA:** Tu única y exclusiva tarea es formular **una sola pregunta** para obtener el dato de la `TAREA ACTUAL`: **'{nombre_tarea_actual}'**.
+    2.  **PROHIBICIÓN:** NO debes preguntar por ningún otro dato. NO resumas la información que falta. NO pidas múltiples datos a la vez. Céntrate únicamente en la `TAREA ACTUAL`.
+    3.  **USO DE DATOS:** Si se proporcionan `Datos disponibles` (como una lista de opciones), DEBES incluirlos en tu pregunta para que el usuario pueda elegir.
     ---
     **TU PROCESO DE DECISIÓN COMO IA (Instrucciones Fijas):**
 
@@ -2345,7 +2351,7 @@ def orquestar_chat():
                 mensaje_para_prompt = f"Contexto de error: El sistema no encontró opciones para '{nombre_paso_amigable}'. Informa al usuario amablemente y sugiere que intente de nuevo o cambie una opción anterior."
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
             else:
-                nombre_tarea_actual = "Preguntar por Siguiente Dato"
+                nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
         else:
             print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)

@@ -2543,16 +2543,20 @@ def identificar_hablante():
         
         huella_actual_tensor = encoder_model.encode_batch(signal)
 
+        if huella_actual_tensor.dim() > 2:
+             huella_actual_tensor = huella_actual_tensor.squeeze(1)
+
         mejor_coincidencia_score = -1.0
         mejor_coincidencia_telefono = "desconocido"
-        
         UMBRAL_DE_SIMILITUD = 0.75 
 
         for registro in huellas_registradas:
             huella_guardada_lista = json.loads(registro['huella_voz'])
             huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
+            if huella_guardada_tensor.dim() == 1:
+                huella_guardada_tensor = huella_guardada_tensor.unsqueeze(0)
 
-            score_tensor = F.cosine_similarity(huella_actual_tensor.squeeze(), huella_guardada_tensor.squeeze())
+            score_tensor = F.cosine_similarity(huella_actual_tensor, huella_guardada_tensor)
             score_float = score_tensor.item()
             
             if score_float > mejor_coincidencia_score:

@@ -2445,30 +2445,33 @@ def inscribir_voz():
 
     archivos_audio = request.files.getlist('archivos_audio') 
 
-    if not archivos_audio or len(archivos_audio) < 3:
-        return jsonify({"error": "Se requieren al menos 3 archivos de audio para una inscripción robusta. Utilice la clave 'archivos_audio'."}), 400
+    if not archivos_audio or len(archivos_audio) < 5:
+        return jsonify({"error": "Se requieren al menos 5 archivos de audio para una inscripción robusta. Utilice la clave 'archivos_audio'."}), 400
 
     lista_de_huellas = []
     temp_files = []
 
     try:
-                
         for archivo in archivos_audio:
             temp_filename = f"temp_{archivo.filename}"
             archivo.save(temp_filename)
             temp_files.append(temp_filename)
 
-            signal, _ = librosa.load(temp_filename, sr=16000)
-            signal_tensor = torch.tensor(signal).unsqueeze(0).to(device)
-            huella_tensor = encoder_model.encode_batch(signal_tensor)
+            signal, fs = torchaudio.load(temp_filename)
             
+            if fs != 16000:
+                resampler = torchaudio.transforms.Resample(orig_freq=fs, new_freq=16000)
+                signal = resampler(signal)
+            
+            huella_tensor = encoder_model.encode_batch(signal)
+
             lista_de_huellas.append(huella_tensor)
 
         if lista_de_huellas:
-            huellas_apiladas = torch.stack(lista_de_huellas)
-            huella_promediada_tensor = torch.mean(huellas_apiladas, dim=0)
+            huellas_apiladas = torch.cat(lista_de_huellas, dim=0)
+            huella_promediada_tensor = torch.mean(huellas_apiladas, dim=0, keepdim=True)
             
-            huella_promediada_lista = huella_promediada_tensor.squeeze().tolist()
+            huella_promediada_lista = huella_promediada_tensor.squeeze().cpu().numpy().tolist()
         else:
             return jsonify({"error": "No se pudieron procesar los archivos de audio para generar huellas."}), 500
 
@@ -2495,6 +2498,9 @@ def inscribir_voz():
         logger.error(f"Error al procesar el audio para inscripción promediada: {e}")
         return jsonify({"error": f"No se pudo procesar el audio: {str(e)}"}), 500
     finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
         for f in temp_files:
             if os.path.exists(f):
                 os.remove(f)
@@ -2502,7 +2508,14 @@ def inscribir_voz():
 @app.route('/api/identificar_hablante', methods=['POST'])
 def identificar_hablante():
     """Identifica a un hablante comparando su voz con las huellas en una DB."""
-    if not encoder_model:
+    try:
+        verification = SpeakerRecognition.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb", 
+            savedir="pretrained_models/spkrec-ecapa-voxceleb",
+            run_opts={"device": device}
+        )
+    except Exception as e:
+        logger.error(f"Error al cargar el modelo SpeakerRecognition: {e}")
         return jsonify({"error": "El modelo de identificación no está disponible."}), 503
 
     db_name = request.form.get('db_name')
@@ -2512,12 +2525,14 @@ def identificar_hablante():
     if 'archivo_audio' not in request.files:
         return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
 
-    archivo = request.files['archivo_audio']
-    temp_filename = f"temp_{archivo.filename}"
-    archivo.save(temp_filename)
-
+    archivo_actual = request.files['archivo_audio']
+    temp_filename_actual = f"temp_actual_{archivo_actual.filename}"
+    archivo_actual.save(temp_filename_actual)
+    
+    temp_files_db = []
     conn = None
     cursor = None
+
     try:
         conn = get_db_connection_for_voice(db_name)
         if not conn:
@@ -2528,35 +2543,29 @@ def identificar_hablante():
         huellas_registradas = cursor.fetchall()
         
         if not huellas_registradas:
-            return jsonify({"hablante_identificado": "desconocido", "confianza": 0.0, "detalle": "No hay usuarios inscritos en la base de datos."})
+            return jsonify({"hablante_identificado": "desconocido", "confianza": 0.0, "detalle": "No hay usuarios inscritos."})
 
-        signal, sample_rate = librosa.load(temp_filename, sr=16000)
-        
-        signal_tensor = torch.tensor(signal)
-        
-        signal_tensor = signal_tensor.unsqueeze(0).to(device)
-        
-        huella_actual_tensor = encoder_model.encode_batch(signal_tensor)
-        
-        huella_actual_tensor = huella_actual_tensor.squeeze()
-        
-        mejor_coincidencia_score = -1
+        mejor_coincidencia_score = -1.0
         mejor_coincidencia_telefono = "desconocido"
-        
         UMBRAL_DE_SIMILITUD = 0.75 
 
         for registro in huellas_registradas:
             huella_guardada_lista = json.loads(registro['huella_voz'])
-            huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
+            huella_guardada_tensor = torch.tensor(huella_guardada_lista).unsqueeze(0)
             
-            score = F.cosine_similarity(huella_actual_tensor.unsqueeze(0), huella_guardada_tensor.unsqueeze(0)).item()
+            temp_filename_db = f"temp_db_{registro['user_telefono']}.wav"
+            torchaudio.save(temp_filename_db, huella_guardada_tensor.cpu(), 16000)
+            temp_files_db.append(temp_filename_db)
+
+            score, prediction = verification.verify_files(temp_filename_actual, temp_filename_db)
+            score_float = score.item()
             
-            if score > mejor_coincidencia_score:
-                mejor_coincidencia_score = score
+            if score_float > mejor_coincidencia_score:
+                mejor_coincidencia_score = score_float
                 mejor_coincidencia_telefono = registro['user_telefono']
 
         if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
-            mejor_coincidencia_telefono  = "desconocido"
+            mejor_coincidencia_telefono = "desconocido"
 
         logger.info(f"Identificación completada. Mejor coincidencia: {mejor_coincidencia_telefono} con score: {mejor_coincidencia_score:.2f}")
         
@@ -2571,7 +2580,10 @@ def identificar_hablante():
     finally:
         if cursor: cursor.close()
         if conn and conn.is_connected(): conn.close()
-        if os.path.exists(temp_filename): os.remove(temp_filename)
+        if os.path.exists(temp_filename_actual): os.remove(temp_filename_actual)
+        for f in temp_files_db:
+            if os.path.exists(f):
+                os.remove(f)
 
 @app.route('/api/analizar_emocion', methods=['POST'])
 def analizar_emocion():

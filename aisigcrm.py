@@ -2650,26 +2650,24 @@ def verificar_telefono_existente():
     Verifica si un número de teléfono ya existe en la tabla huellas_voz.
     Espera un JSON con la clave "numero_telefono".
     """
-    # 1. Validar la entrada
     try:
         data = request.get_json()
-        if not data or 'numero_telefono' not in data:
-            return jsonify({"error": "Falta el parámetro 'numero_telefono' en el cuerpo de la solicitud."}), 400
+        if not data or 'numero_telefono' not in data or 'db_name' not in data:
+            return jsonify({"error": "Faltan los parámetros 'numero_telefono' o 'db_name' en el cuerpo de la solicitud."}), 400
         
         numero_telefono = data['numero_telefono']
-        if not numero_telefono:
-            return jsonify({"error": "El valor de 'numero_telefono' no puede estar vacío."}), 400
+        db_name = data['db_name']
+
+        if not numero_telefono or not db_name:
+            return jsonify({"error": "Los valores de 'numero_telefono' y 'db_name' no pueden estar vacíos."}), 400
+        
 
     except Exception as e:
         return jsonify({"error": f"JSON malformado o error en la solicitud: {str(e)}"}), 400
 
-    # 2. Conectar a la base de datos y consultar
     conn = None
     cursor = None
-    try:
-        # Conexión a la base de datos específica como se muestra en tu imagen
-        db_name = "sigcrm_clinicasancho"
-        
+    try:        
         conn = mysql.connector.connect(
             host=DB_HOST,
             user=DB_USERNAME,
@@ -2678,32 +2676,23 @@ def verificar_telefono_existente():
         )
         cursor = conn.cursor()
 
-        # Usamos COUNT(*) para una consulta más eficiente
-        # La consulta se parametriza para evitar inyección SQL
         query = "SELECT COUNT(*) FROM huellas_voz WHERE user_telefono = %s"
         cursor.execute(query, (numero_telefono,))
         
-        # El resultado de COUNT(*) siempre es una fila
         count = cursor.fetchone()[0]
 
-        # 3. Devolver la respuesta
         if count > 0:
-            # Si el contador es mayor que 0, el número existe
             return jsonify({"existe": True, "numero": numero_telefono}), 200
         else:
-            # Si el contador es 0, el número no existe
             return jsonify({"existe": False, "numero": numero_telefono}), 200
 
     except mysql.connector.Error as err:
-        # Manejo de errores de base de datos
         logger.error(f"Error de base de datos en verificar_telefono_existente: {err}")
         return jsonify({"error": f"Error de base de datos: {err.msg}"}), 500
     except Exception as e:
-        # Manejo de cualquier otro error inesperado
         logger.error(f"Error inesperado en verificar_telefono_existente: {e}")
         return jsonify({"error": "Ocurrió un error interno en el servidor."}), 500
     finally:
-        # Asegurarse de cerrar la conexión y el cursor
         if cursor:
             cursor.close()
         if conn and conn.is_connected():

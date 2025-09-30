@@ -2508,14 +2508,7 @@ def inscribir_voz():
 @app.route('/api/identificar_hablante', methods=['POST'])
 def identificar_hablante():
     """Identifica a un hablante comparando su voz con las huellas en una DB."""
-    try:
-        verification = SpeakerRecognition.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb", 
-            savedir="pretrained_models/spkrec-ecapa-voxceleb",
-            run_opts={"device": device}
-        )
-    except Exception as e:
-        logger.error(f"Error al cargar el modelo SpeakerRecognition: {e}")
+    if not encoder_model:
         return jsonify({"error": "El modelo de identificación no está disponible."}), 503
 
     db_name = request.form.get('db_name')
@@ -2525,13 +2518,12 @@ def identificar_hablante():
     if 'archivo_audio' not in request.files:
         return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
 
-    archivo_actual = request.files['archivo_audio']
-    temp_filename_actual = f"temp_actual_{archivo_actual.filename}"
-    archivo_actual.save(temp_filename_actual)
-    
+    archivo = request.files['archivo_audio']
+    temp_filename_actual = f"temp_actual_{archivo.filename}"
+    archivo.save(temp_filename_actual)
+
     conn = None
     cursor = None
-
     try:
         conn = get_db_connection_for_voice(db_name)
         if not conn:
@@ -2548,24 +2540,25 @@ def identificar_hablante():
         if fs != 16000:
             resampler = torchaudio.transforms.Resample(orig_freq=fs, new_freq=16000)
             signal = resampler(signal)
-        huella_actual_tensor = verification.encode_batch(signal)
+        
+        huella_actual_tensor = encoder_model.encode_batch(signal)
 
         mejor_coincidencia_score = -1.0
         mejor_coincidencia_telefono = "desconocido"
-        UMBRAL_DE_SIMILITUD = 0.65 
+        
+        UMBRAL_DE_SIMILITUD = 0.75 
 
         for registro in huellas_registradas:
             huella_guardada_lista = json.loads(registro['huella_voz'])
-            huella_guardada_tensor = torch.tensor(huella_guardada_lista).unsqueeze(0).to(device)
+            huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
 
-            score_tensor, prediction = verification.verify_tensors(huella_actual_tensor, huella_guardada_tensor)
-            
+            score_tensor = F.cosine_similarity(huella_actual_tensor.squeeze(), huella_guardada_tensor.squeeze())
             score_float = score_tensor.item()
             
             if score_float > mejor_coincidencia_score:
                 mejor_coincidencia_score = score_float
                 mejor_coincidencia_telefono = registro['user_telefono']
-        
+    
         if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
             mejor_coincidencia_telefono = "desconocido"
 
@@ -2578,7 +2571,7 @@ def identificar_hablante():
 
     except Exception as e:
         logger.error(f"Error durante la identificación: {e}")
-        traceback.print_exc() 
+        traceback.print_exc()
         return jsonify({"error": f"No se pudo procesar el audio para identificación: {str(e)}"}), 500
     finally:
         if cursor: cursor.close()

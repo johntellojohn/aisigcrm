@@ -2529,7 +2529,6 @@ def identificar_hablante():
     temp_filename_actual = f"temp_actual_{archivo_actual.filename}"
     archivo_actual.save(temp_filename_actual)
     
-    temp_files_db = []
     conn = None
     cursor = None
 
@@ -2545,25 +2544,28 @@ def identificar_hablante():
         if not huellas_registradas:
             return jsonify({"hablante_identificado": "desconocido", "confianza": 0.0, "detalle": "No hay usuarios inscritos."})
 
+        signal, fs = torchaudio.load(temp_filename_actual)
+        if fs != 16000:
+            resampler = torchaudio.transforms.Resample(orig_freq=fs, new_freq=16000)
+            signal = resampler(signal)
+        huella_actual_tensor = verification.encode_batch(signal)
+
         mejor_coincidencia_score = -1.0
         mejor_coincidencia_telefono = "desconocido"
-        UMBRAL_DE_SIMILITUD = 0.75 
+        UMBRAL_DE_SIMILITUD = 0.65 
 
         for registro in huellas_registradas:
             huella_guardada_lista = json.loads(registro['huella_voz'])
-            huella_guardada_tensor = torch.tensor(huella_guardada_lista).unsqueeze(0)
-            
-            temp_filename_db = f"temp_db_{registro['user_telefono']}.wav"
-            torchaudio.save(temp_filename_db, huella_guardada_tensor.cpu(), 16000)
-            temp_files_db.append(temp_filename_db)
+            huella_guardada_tensor = torch.tensor(huella_guardada_lista).unsqueeze(0).to(device)
 
-            score, prediction = verification.verify_files(temp_filename_actual, temp_filename_db)
-            score_float = score.item()
+            score_tensor, prediction = verification.verify_tensors(huella_actual_tensor, huella_guardada_tensor)
+            
+            score_float = score_tensor.item()
             
             if score_float > mejor_coincidencia_score:
                 mejor_coincidencia_score = score_float
                 mejor_coincidencia_telefono = registro['user_telefono']
-
+        
         if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
             mejor_coincidencia_telefono = "desconocido"
 
@@ -2576,14 +2578,12 @@ def identificar_hablante():
 
     except Exception as e:
         logger.error(f"Error durante la identificación: {e}")
+        traceback.print_exc() 
         return jsonify({"error": f"No se pudo procesar el audio para identificación: {str(e)}"}), 500
     finally:
         if cursor: cursor.close()
         if conn and conn.is_connected(): conn.close()
         if os.path.exists(temp_filename_actual): os.remove(temp_filename_actual)
-        for f in temp_files_db:
-            if os.path.exists(f):
-                os.remove(f)
 
 @app.route('/api/analizar_emocion', methods=['POST'])
 def analizar_emocion():

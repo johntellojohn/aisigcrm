@@ -2548,7 +2548,7 @@ def identificar_hablante():
 
         mejor_coincidencia_score = -1.0
         mejor_coincidencia_telefono = "desconocido"
-        UMBRAL_DE_SIMILITUD = 0.75 
+        UMBRAL_DE_SIMILITUD = 0.60 
 
         for registro in huellas_registradas:
             huella_guardada_lista = json.loads(registro['huella_voz'])

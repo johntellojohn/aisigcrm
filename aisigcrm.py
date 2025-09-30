@@ -2428,33 +2428,6 @@ def get_db_connection_for_voice(db_name):
         logger.error(f"Error al conectar a MySQL DB '{db_name}': {e}")
         return None
 
-def inicializar_tabla_voces(db_name):
-    """Asegura que la tabla para guardar las huellas de voz exista en la DB especificada."""
-    conn = get_db_connection_for_voice(db_name)
-    if not conn:
-        raise mysql.connector.Error("No se pudo conectar a la base de datos para inicializar la tabla.")
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS huellas_voz (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id VARCHAR(255) NOT NULL UNIQUE,
-                nombre_usuario VARCHAR(255) NOT NULL,
-                huella_voz JSON NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        logger.info(f"Tabla 'huellas_voz' verificada/creada en la base de datos '{db_name}'.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error al crear la tabla 'huellas_voz': {e}")
-        raise
-    finally:
-        if conn.is_connected():
-            cursor.close()
-            conn.close()
-
 @app.route('/api/inscribir_voz', methods=['POST'])
 def inscribir_voz():
     """
@@ -2465,11 +2438,10 @@ def inscribir_voz():
         return jsonify({"error": "El modelo de identificación no está disponible."}), 503
 
     db_name = request.form.get('db_name')
-    user_id = request.form.get('user_id')
-    nombre_usuario = request.form.get('nombre_usuario')
+    user_telefono  = request.form.get('user_telefono')
     
-    if not db_name or not user_id or not nombre_usuario:
-        return jsonify({"error": "Se requieren los campos 'db_name', 'user_id' y 'nombre_usuario'."}), 400
+    if not db_name or not user_telefono:
+        return jsonify({"error": "Se requieren los campos 'db_name' y 'user_telefono'."}), 400
 
     archivos_audio = request.files.getlist('archivos_audio') 
 
@@ -2480,7 +2452,6 @@ def inscribir_voz():
     temp_files = []
 
     try:
-        inicializar_tabla_voces(db_name)
                 
         for archivo in archivos_audio:
             temp_filename = f"temp_{archivo.filename}"
@@ -2507,17 +2478,17 @@ def inscribir_voz():
             
         cursor = conn.cursor()
         query = """
-            INSERT INTO huellas_voz (user_id, nombre_usuario, huella_voz)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE nombre_usuario = %s, huella_voz = %s
+            INSERT INTO huellas_voz (user_telefono, huella_voz)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE huella_voz = %s
         """
-        cursor.execute(query, (user_id, nombre_usuario, json.dumps(huella_promediada_lista), nombre_usuario, json.dumps(huella_promediada_lista)))
+        cursor.execute(query, (user_telefono, json.dumps(huella_promediada_lista), json.dumps(huella_promediada_lista)))
         conn.commit()
         
-        logger.info(f"Voz del usuario '{nombre_usuario}' (ID: {user_id}) registrada con una huella promediada en DB '{db_name}'.")
+        logger.info(f"Voz del teléfono '{user_telefono}' registrada/actualizada en DB '{db_name}'.")
         return jsonify({
             "status": "exito",
-            "mensaje": f"La voz del usuario '{nombre_usuario}' ha sido registrada con un perfil de voz mejorado."
+            "mensaje": f"La huella de voz para el teléfono '{user_telefono}' ha sido registrada/actualizada."
         })
         
     except Exception as e:
@@ -2553,7 +2524,7 @@ def identificar_hablante():
             return jsonify({"error": "No se pudo conectar a la base de datos especificada."}), 500
 
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT user_id, nombre_usuario, huella_voz FROM huellas_voz")
+        cursor.execute("SELECT user_telefono, huella_voz FROM huellas_voz")
         huellas_registradas = cursor.fetchall()
         
         if not huellas_registradas:
@@ -2570,7 +2541,7 @@ def identificar_hablante():
         huella_actual_tensor = huella_actual_tensor.squeeze()
         
         mejor_coincidencia_score = -1
-        mejor_coincidencia_nombre = "desconocido"
+        mejor_coincidencia_telefono = "desconocido"
         
         UMBRAL_DE_SIMILITUD = 0.75 
 
@@ -2582,15 +2553,15 @@ def identificar_hablante():
             
             if score > mejor_coincidencia_score:
                 mejor_coincidencia_score = score
-                mejor_coincidencia_nombre = registro['nombre_usuario']
+                mejor_coincidencia_telefono = registro['user_telefono']
 
         if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
-            mejor_coincidencia_nombre = "desconocido"
+            mejor_coincidencia_telefono  = "desconocido"
 
-        logger.info(f"Identificación completada. Mejor coincidencia: {mejor_coincidencia_nombre} con score: {mejor_coincidencia_score:.2f}")
+        logger.info(f"Identificación completada. Mejor coincidencia: {mejor_coincidencia_telefono} con score: {mejor_coincidencia_score:.2f}")
         
         return jsonify({
-            "hablante_identificado": mejor_coincidencia_nombre,
+            "hablante_identificado": mejor_coincidencia_telefono,
             "confianza": round(mejor_coincidencia_score, 2)
         })
 
@@ -2672,6 +2643,71 @@ def analizar_emocion():
     finally:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
+
+@app.route('/api/verificar_telefono_existente', methods=['POST'])
+def verificar_telefono_existente():
+    """
+    Verifica si un número de teléfono ya existe en la tabla huellas_voz.
+    Espera un JSON con la clave "numero_telefono".
+    """
+    # 1. Validar la entrada
+    try:
+        data = request.get_json()
+        if not data or 'numero_telefono' not in data:
+            return jsonify({"error": "Falta el parámetro 'numero_telefono' en el cuerpo de la solicitud."}), 400
+        
+        numero_telefono = data['numero_telefono']
+        if not numero_telefono:
+            return jsonify({"error": "El valor de 'numero_telefono' no puede estar vacío."}), 400
+
+    except Exception as e:
+        return jsonify({"error": f"JSON malformado o error en la solicitud: {str(e)}"}), 400
+
+    # 2. Conectar a la base de datos y consultar
+    conn = None
+    cursor = None
+    try:
+        # Conexión a la base de datos específica como se muestra en tu imagen
+        db_name = "sigcrm_clinicasancho"
+        
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USERNAME,
+            password=DB_PASSWORD,
+            database=db_name
+        )
+        cursor = conn.cursor()
+
+        # Usamos COUNT(*) para una consulta más eficiente
+        # La consulta se parametriza para evitar inyección SQL
+        query = "SELECT COUNT(*) FROM huellas_voz WHERE user_telefono = %s"
+        cursor.execute(query, (numero_telefono,))
+        
+        # El resultado de COUNT(*) siempre es una fila
+        count = cursor.fetchone()[0]
+
+        # 3. Devolver la respuesta
+        if count > 0:
+            # Si el contador es mayor que 0, el número existe
+            return jsonify({"existe": True, "numero": numero_telefono}), 200
+        else:
+            # Si el contador es 0, el número no existe
+            return jsonify({"existe": False, "numero": numero_telefono}), 200
+
+    except mysql.connector.Error as err:
+        # Manejo de errores de base de datos
+        logger.error(f"Error de base de datos en verificar_telefono_existente: {err}")
+        return jsonify({"error": f"Error de base de datos: {err.msg}"}), 500
+    except Exception as e:
+        # Manejo de cualquier otro error inesperado
+        logger.error(f"Error inesperado en verificar_telefono_existente: {e}")
+        return jsonify({"error": "Ocurrió un error interno en el servidor."}), 500
+    finally:
+        # Asegurarse de cerrar la conexión y el cursor
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
 
 ###############
 # ip and port #

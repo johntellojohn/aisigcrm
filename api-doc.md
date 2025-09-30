@@ -307,6 +307,41 @@
         "hablante_identificado": "[string]", // Nombre del usuario reconocido o "desconocido".
         "confianza": [float]                 // Puntuación de similitud (entre -1.0 y 1.0).
     }
+## Frases para la Inscripción de Voz (/api/inscribir_voz)
+El objetivo aquí es que el usuario grabe 5 audios cortos y separados, cada uno con una frase distinta. Esto permite que el modelo de IA capture diferentes fonemas (sonidos), entonaciones y ritmos del hablante. Al promediar las "huellas" de estas 5 grabaciones, se crea un perfil de voz muy completo y resistente a variaciones.
+
+Instrucción para el usuario: "Para registrar tu perfil de voz de forma segura, por favor graba las siguientes 5 frases en audios separados."
+
+Frase: "El veloz murciélago hindú comía feliz cardillo y kiwi. La cigüeña tocaba el saxofón detrás del palenque de paja."
+
+Por qué funciona: Esta frase es un pangrama, lo que significa que contiene todas las letras del alfabeto español. Obliga al usuario a pronunciar una amplia gama de sonidos, capturando las características únicas de su tracto vocal. Es la mejor forma de obtener una muestra completa de su voz.
+
+Frase: "Mi código de autorización para el sistema es nueve, cinco, ocho, cero, dos."
+
+Por qué funciona: La pronunciación de números es muy distintiva en cada persona. Además, el tono declarativo y neutro de esta frase proporciona una línea base excelente del habla conversacional del usuario.
+
+Frase: "¿Están seguros de que esta grabación será suficiente para verificar mi identidad en el futuro?"
+
+Por qué funciona: Al hacer una pregunta, la entonación y la melodía de la voz cambian drásticamente, especialmente al final. Esto le da al modelo información valiosa sobre el rango dinámico del habla del usuario.
+
+Frase: "¡Confirmo con mi voz que autorizo esta transacción de manera definitiva!"
+
+Por qué funciona: Una frase exclamativa o con énfasis introduce energía y un ligero estrés en la voz. El modelo aprende cómo suena el usuario cuando no está en un estado completamente neutro, lo que lo hace más robusto para identificarlo en situaciones reales donde el tono puede variar.
+
+Frase de Contraseña:
+
+Frase: "Mi voz es la clave que me da acceso seguro."
+
+Por qué funciona: Esta será la "contraseña" que el usuario repetirá para autenticarse. Es crucial que el sistema ya tenga una grabación de alta calidad de esta frase específica en su perfil. Debe ser fácil de recordar pero lo suficientemente larga para ser segura.
+
+## Frase para la Identificación de Voz (/api/identificar_hablante)
+Para la etapa de identificación o verificación, la consistencia es la clave. El objetivo no es capturar variedad, sino confirmar que la persona que habla es la misma que se inscribió.
+
+Instrucción para el usuario: "Para verificar tu identidad, por favor di tu frase de seguridad."
+
+Frase Única de Verificación:
+
+Frase: "Mi voz es la clave que me da acceso seguro."
 
 * @app.route('/api/analizar_emocion', methods=['POST']): Analiza un archivo de audio para detectar la emoción predominante en la voz. Devuelve una alerta binaria (0 para estable, 1 para inestable) si la emoción detectada corresponde a miedo, ira o disgusto.
 *Entrada (form-data):*

@@ -2480,12 +2480,15 @@ def inscribir_voz():
             return jsonify({"error": "No se pudo conectar a la base de datos especificada."}), 500
             
         cursor = conn.cursor()
+        now_utc = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         query = """
-            INSERT INTO huellas_voz (user_telefono, huella_voz)
-            VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE huella_voz = %s
+            INSERT INTO huellas_voz (user_telefono, huella_voz, created_at, updated_at)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE 
+                huella_voz = VALUES(huella_voz), 
+                updated_at = VALUES(updated_at)
         """
-        cursor.execute(query, (user_telefono, json.dumps(huella_promediada_lista), json.dumps(huella_promediada_lista)))
+        cursor.execute(query, (user_telefono, json.dumps(huella_promediada_lista), now_utc, now_utc))
         conn.commit()
         
         logger.info(f"Voz del teléfono '{user_telefono}' registrada/actualizada en DB '{db_name}'.")

@@ -2515,7 +2515,8 @@ def identificar_hablante():
         return jsonify({"error": "El modelo de identificación no está disponible."}), 503
 
     db_name = request.form.get('db_name')
-    if not db_name:
+    user_telefono_a_verificar = request.form.get('user_telefono')
+    if not db_name or not user_telefono_a_verificar:
         return jsonify({"error": "Se requiere el campo 'db_name'."}), 400
         
     if 'archivo_audio' not in request.files:
@@ -2533,11 +2534,12 @@ def identificar_hablante():
             return jsonify({"error": "No se pudo conectar a la base de datos especificada."}), 500
 
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT user_telefono, huella_voz FROM huellas_voz")
-        huellas_registradas = cursor.fetchall()
+        cursor.execute("SELECT user_telefono, huella_voz FROM huellas_voz WHERE user_telefono = %s", (user_telefono_a_verificar,))
+        registro_usuario = cursor.fetchone()
         
-        if not huellas_registradas:
-            return jsonify({"hablante_identificado": "desconocido", "confianza": 0.0, "detalle": "No hay usuarios inscritos."})
+        if not registro_usuario:
+            logger.warning(f"No se encontró huella de voz para el teléfono: {user_telefono_a_verificar}")
+            return jsonify({"resultado_verificacion": "desconocido", "confianza": 0.0})
 
         signal, fs = torchaudio.load(temp_filename_actual)
         if fs != 16000:
@@ -2553,27 +2555,23 @@ def identificar_hablante():
         mejor_coincidencia_telefono = "desconocido"
         UMBRAL_DE_SIMILITUD = 0.60 
 
-        for registro in huellas_registradas:
-            huella_guardada_lista = json.loads(registro['huella_voz'])
-            huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
-            if huella_guardada_tensor.dim() == 1:
-                huella_guardada_tensor = huella_guardada_tensor.unsqueeze(0)
+        huella_guardada_lista = json.loads(registro_usuario['huella_voz'])
+        huella_guardada_tensor = torch.tensor(huella_guardada_lista).to(device)
+        if huella_guardada_tensor.dim() == 1:
+            huella_guardada_tensor = huella_guardada_tensor.unsqueeze(0)
 
-            score_tensor = F.cosine_similarity(huella_actual_tensor, huella_guardada_tensor)
-            score_float = score_tensor.item()
-            
-            if score_float > mejor_coincidencia_score:
-                mejor_coincidencia_score = score_float
-                mejor_coincidencia_telefono = registro['user_telefono']
-    
-        if mejor_coincidencia_score < UMBRAL_DE_SIMILITUD:
-            mejor_coincidencia_telefono = "desconocido"
+        score_tensor = F.cosine_similarity(huella_actual_tensor, huella_guardada_tensor)
+        score_float = score_tensor.item()
+        
+        resultado_final = "fallo_identidad"
+        if score_float >= UMBRAL_DE_SIMILITUD:
+            resultado_final = "exito"
 
-        logger.info(f"Identificación completada. Mejor coincidencia: {mejor_coincidencia_telefono} con score: {mejor_coincidencia_score:.2f}")
+        logger.info(f"Verificación para {user_telefono_a_verificar}. Resultado: {resultado_final} con score: {score_float:.2f}")
         
         return jsonify({
-            "hablante_identificado": mejor_coincidencia_telefono,
-            "confianza": round(mejor_coincidencia_score, 2)
+            "resultado_verificacion": resultado_final,
+            "confianza": round(score_float, 2)
         })
 
     except Exception as e:

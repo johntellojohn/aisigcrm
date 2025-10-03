@@ -2445,8 +2445,8 @@ def inscribir_voz():
 
     archivos_audio = request.files.getlist('archivos_audio') 
 
-    if not archivos_audio or len(archivos_audio) < 5:
-        return jsonify({"error": "Se requieren al menos 5 archivos de audio para una inscripción robusta. Utilice la clave 'archivos_audio'."}), 400
+    if not archivos_audio or len(archivos_audio) < 10:
+        return jsonify({"error": "Se requieren al menos 10 archivos de audio para una inscripción robusta. Utilice la clave 'archivos_audio'."}), 400
 
     lista_de_huellas = []
     temp_files = []

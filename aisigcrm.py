@@ -37,14 +37,21 @@ from langchain.text_splitter import CharacterTextSplitter
 from dotenv import load_dotenv
 import mysql.connector
 from pydantic import BaseModel
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from dateutil.parser import parse, ParserError
 from datetime import time
+import logging
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout 
+)
 
 # Obtener credenciales desde .env
 os.environ["PINECONE_API_KEY"] = os.getenv('PINECONE_API_KEY')
@@ -1797,7 +1804,7 @@ def analizardoc():
         
         content_string = extraction_response.choices[0].message.content
         if content_string is None:
-             return jsonify({"error": "La IA no generó el JSON. Razón: " + extraction_response.choices[0].finish_reason}), 500
+            return jsonify({"error": "La IA no generó el JSON. Razón: " + extraction_response.choices[0].finish_reason}), 500
         
         structured_data_object = json.loads(content_string)
 
@@ -1811,7 +1818,7 @@ def analizardoc():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"Error en la llamada a OpenAI: {str(e)}"}), 500
-   
+
 class ChatRequest(BaseModel):
     flujo_id: int
     chat_id: str
@@ -1922,7 +1929,7 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                                 
                                 paso['sin_datos'] = False if paso.get('data') else True
                                 if paso['sin_datos']:
-                                      paso['error_api'] = 'LISTA_VACIA'
+                                    paso['error_api'] = 'LISTA_VACIA'
                             else:
                                 paso['error_api'] = 'LISTA_VACIA'
                                 print(f"Advertencia: La API para '{paso.get('nombre')}' no devolvió una lista válida o la lista estaba vacía.", flush=True)
@@ -2156,12 +2163,118 @@ def traducir_variable_a_texto_humano(nombre_variable: str) -> str:
         print(f"!!! ERROR al traducir variable: {e}. Usando fallback. !!!", flush=True)
         return nombre_variable.replace('_', ' ')
 
+def identificar_campo_a_corregir_con_ia(mensaje_usuario: str, campos_map: Dict[str, str]) -> Union[str, None]:
+    """
+    Usa el LLM para identificar qué campo quiere corregir el usuario, usando un mapa de nombres legibles.
+    Recibe: un mapa {"nombre_legible": "variable_salida"}
+    Retorna: el nombre de la variable_salida (ej. "trabajador_id") o None.
+    """
+
+    logger = logging.getLogger(__name__)
+    
+    if not campos_map:
+        logger.warning("No se proporcionaron campos posibles para la corrección (mapa vacío).")
+        return None
+
+    campos_humanos = list(campos_map.keys())
+    
+    campos_str = "\n".join([f"- {nombre_humano}" for nombre_humano in campos_humanos])
+    
+    prompt_identificacion = f"""
+    El usuario indicó que hay un error en la información recopilada. Su mensaje es:
+    "{mensaje_usuario}"
+
+    Los campos (pasos del proceso) que podrían haberse recopilado son:
+    {campos_str}
+
+    Analiza el mensaje del usuario y determina CUÁL de los campos de la lista anterior quiere corregir.
+    RESPONDE ÚNICAMENTE con el nombre exacto del campo de la lista (ej. "consultar_doctor").
+    Si no puedes determinar claramente qué campo quiere corregir, responde EXACTAMENTE con la palabra "NINGUNO".
+    """
+    try:
+        #logger.info(f"Llamando a IA para identificar campo a corregir. Mensaje: '{mensaje_usuario}'. Campos humanos: {campos_humanos}")
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt_identificacion}],
+            temperature=0.0,
+            max_tokens=50
+        )
+        
+        campo_identificado_humano = response.choices[0].message.content.strip()
+        campo_identificado_humano = campo_identificado_humano.replace('"', '').replace("'", "").replace('`', '')
+
+        #logger.info(f"IA identificó el nombre humano: '{campo_identificado_humano}'")
+
+        if campo_identificado_humano.upper() == "NINGUNO":
+            #logger.warning("IA no pudo identificar un campo claro para corregir.")
+            return None
+        
+        if campo_identificado_humano in campos_map:
+            variable_salida_correspondiente = campos_map[campo_identificado_humano]
+            #logger.info(f"Nombre humano '{campo_identificado_humano}' mapeado a variable_salida '{variable_salida_correspondiente}'.")
+            return variable_salida_correspondiente
+        else:
+            campo_identificado_lower = campo_identificado_humano.lower()
+            for nombre_humano_key in campos_humanos:
+                if campo_identificado_lower in nombre_humano_key.lower() or nombre_humano_key.lower() in campo_identificado_lower:
+                    variable_salida_correspondiente = campos_map[nombre_humano_key]
+                    logger.warning(f"Coincidencia parcial encontrada: IA dijo '{campo_identificado_humano}', se mapea a '{nombre_humano_key}' (variable: '{variable_salida_correspondiente}').")
+                    return variable_salida_correspondiente
+
+            #logger.warning(f"IA devolvió '{campo_identificado_humano}', que no coincide con ningún campo humano del mapa.")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error al llamar a OpenAI para identificar campo: {e}")
+        return None
+
+def invalidar_pasos_dependientes(variable_a_invalidar: str, estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]], logger: logging.Logger) -> Dict[str, Any]:
+    """
+    Invalida un campo en el estado actual y todos los campos subsiguientes que dependen de él.
+    Utiliza una cola para realizar un recorrido de las dependencias.
+    """
+    if not variable_a_invalidar or variable_a_invalidar not in estado_actual:
+        return estado_actual
+
+    queue = deque([variable_a_invalidar])
+    procesados = set()
+    
+    #logger.info(f"--- INICIO DE INVALIDACIÓN EN CASCADA ---")
+    #logger.info(f"Variable raíz a invalidar: {variable_a_invalidar}")
+
+    while queue:
+        var_actual = queue.popleft()
+        
+        if var_actual in procesados:
+            continue
+        
+        procesados.add(var_actual)
+        
+        if var_actual in estado_actual and estado_actual[var_actual] is not None:
+            estado_actual[var_actual] = None
+            #logger.info(f"-> Invalidado: '{var_actual}' (puesto a None)")
+        
+        for paso in pasos_config:
+            parametros_str = paso.get('parametros_requeridos', '')
+            parametros_requeridos = [p.strip() for p in parametros_str.split(';')] if parametros_str else []
+            
+            if var_actual in parametros_requeridos:
+                variable_dependiente = paso.get('variable_salida')
+                
+                if variable_dependiente and variable_dependiente not in procesados:
+                    queue.append(variable_dependiente)
+                    #logger.info(f"   '{var_actual}' es un parámetro para '{paso.get('nombre')}', que produce '{variable_dependiente}'. Encolando para invalidar.")
+
+    #logger.info(f"--- FIN DE INVALIDACIÓN EN CASCADA ---")
+    return estado_actual
+
 @app.route('/api/orquestador_gpt', methods=['POST'])
 def orquestar_chat():
+    db_connection = None
+    cursor = None
     try:
-        print("--- EJECUTANDO VERSIÓN DE CÓDIGO CORREGIDA (v2) ---", flush=True) 
-        print("\n\n**************************************************", flush=True)
-        print(" NUEVA PETICIÓN A /api/orquestador_gpt ", flush=True)
+        logger = logging.getLogger(__name__)
+        print(" NUEVA PETICIÓN V2 A /api/orquestador_gpt ", flush=True)
         print("**************************************************", flush=True)
         print("\n--- DATOS CRUDOS RECIBIDOS DE LARAVEL ---", flush=True)
         print(json.dumps(request.json, indent=2, ensure_ascii=False), flush=True)
@@ -2174,7 +2287,6 @@ def orquestar_chat():
     {orq_contexto}
     Tu misión es ayudar al usuario a completar un proceso paso a paso. En tu interacción inicial, menciona amablemente que para hacer el proceso más rápido y efectivo, es ideal que sus respuestas sean directas (por ejemplo, eligiendo el número de una opción o escribiendo directamente el dato solicitado).
     ---
-
     # TONO DE VOZ
     {orq_tono}
     ---
@@ -2183,12 +2295,12 @@ def orquestar_chat():
     ---
     # EJEMPLOS DE RESPUESTAS Y GUÍA DE ESTILO
     {orq_respuestas}
-
     ---
     # REGLAS DE COMPORTAMIENTO CRÍTICAS
     1.  **TAREA EXCLUSIVA:** Tu única y exclusiva tarea es formular **una sola pregunta** para obtener el dato de la `TAREA ACTUAL`: **'{nombre_tarea_actual}'**.
     2.  **PROHIBICIÓN:** NO debes preguntar por ningún otro dato. NO resumas la información que falta. NO pidas múltiples datos a la vez. Céntrate únicamente en la `TAREA ACTUAL`.
     3.  **USO DE DATOS:** Si se proporcionan `Datos disponibles` (como una lista de opciones), DEBES incluirlos en tu pregunta para que el usuario pueda elegir.
+    4.  **CONFIRMACIÓN:** Cuando la TAREA ACTUAL sea "Solicitar Confirmación", DEBES presentar un resumen claro y legible usando el JSON de resumen proporcionado en `Datos disponibles`. **NO uses el `{estado_json}` para el resumen**, ya que contiene IDs internos.
     ---
     **TU PROCESO DE DECISIÓN COMO IA (Instrucciones Fijas):**
 
@@ -2197,6 +2309,7 @@ def orquestar_chat():
     2.  **FORMULA TU RESPUESTA:**
         - **TAREA = "Preguntar por Siguiente Dato":** Formula una pregunta clara para obtener el dato que falta. Si hay una lista en `Datos disponibles`, preséntala de forma numerada con <br>.
         - **TAREA = "Solicitar Confirmación":** Presenta un resumen de la cita y pregunta claramente si el usuario confirma.
+        - **TAREA = "Solicitar Aclaración de Corrección":** Pregunta específicamente *qué* información de la mostrada anteriormente necesita ser corregida.
         - **TAREA = "Finalizar Conversación":** Da un mensaje de éxito final.
         - **TAREA = "Cancelar Proceso":** Da un mensaje de cancelación.
         - **TAREA = "Informar Error":** Explica el problema al usuario.
@@ -2216,7 +2329,6 @@ def orquestar_chat():
     # FORMATO DE RESPUESTA OBLIGATORIO (JSON VÁLIDO)
     {orq_formato_respuestas}
     """
-    db_connection = None
     try:
         db_name_from_laravel = request.json.get('db_name')
         if not db_name_from_laravel:
@@ -2248,47 +2360,104 @@ def orquestar_chat():
 
         estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
         estado_actual = estado_base.copy()
-        estado_actual.update(req_data.estado_actual)
+        estado_recibido_laravel = req_data.estado_actual or {}
+        estado_actual.update(estado_recibido_laravel)
 
-        if estado_actual.get('confirmacion_pendiente'):
-            mensaje_usuario_lower = req_data.mensaje_usuario.lower().strip()
-            palabras_afirmativas = ['si', 'sí', 'sip', 'sipi', 'ok', 'okay', 'okey', 'dale', 'va', 'claro', 'por supuesto', 'desde luego','confirmo', 'confirmado', 'afirmativo', 'correcto', 'exacto', 'así es', 'de acuerdo', 'entendido',
-            'comprendido', 'copiado', 'perfecto', 'excelente', 'genial', 'súper', 'super','bueno', 'bien', 'muy bien', 'acepto', 'aceptar', 'proceder', 'adelante', 'continuar', 'continua', 'continúa', 'seguir', 'hágale', 'hacerlo',
-            'registrar', 'agendar', 'reservar','está bien', 'estoy de acuerdo', 'me parece bien', 'eso es', 'justo', 'seguro', 'sin problema']
-            palabras_negativas = ['no', 'nop', 'nope', 'para nada', 'negativo', 'nunca', 'cancelar', 'cancela', 'cancelado', 'detener', 'detén', 'detente', 'parar', 'para', 'terminar', 'finalizar',
-            'ya no', 'no más', 'basta', 'incorrecto', 'no es correcto', 'equivocado', 'erróneo', 'no estoy de acuerdo', 'rechazar', 'rechazo',
-            'no quiero', 'no deseo','cambiar', 'modificar', 'mejor no', 'espera', 'un momento', 'no confirmo']
+        if estado_actual.get('esperando_correccion'):
+            #logger.info("Estado: esperando_correccion = True. Intentando identificar campo...")
+            campos_corregibles_map = {
+                p['nombre']: p['variable_salida'] 
+                for p in pasos_config 
+                if p.get('variable_salida') and p.get('nombre') and int(p.get('required') or 0) == 1
+            }
+            
+            variable_a_corregir = identificar_campo_a_corregir_con_ia(
+                req_data.mensaje_usuario, 
+                campos_corregibles_map
+            )
 
-            if any(palabra in mensaje_usuario_lower for palabra in palabras_afirmativas):
-                print("--- DIAGNÓSTICO: El usuario ha confirmado la cita. Finalizando flujo. ---", flush=True)
-                estado_actual.pop('confirmacion_pendiente', None)
-                final_response = {
-                    "mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado"
-                }
-                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
-                return jsonify(final_response)
-
-            elif any(palabra in mensaje_usuario_lower for palabra in palabras_negativas):
-                print("--- DIAGNÓSTICO: El usuario ha cancelado en el paso de confirmación. ---", flush=True)
-                estado_actual.pop('confirmacion_pendiente', None)
-                final_response = {
-                    "mensaje_bot": "Entendido, he cancelado el proceso. Si cambias de opinión, estoy aquí para ayudarte.",
-                    "nuevo_estado": estado_actual,
-                    "accion": "finalizado_por_usuario"
-                }
-                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
-                return jsonify(final_response)
-
+            if variable_a_corregir:
+                logger.info(f"Campo a corregir identificado: {variable_a_corregir}. Invalidando y procediendo a re-preguntar.")
+                estado_actual = invalidar_pasos_dependientes(
+                    variable_a_corregir,
+                    estado_actual,
+                    pasos_config,  
+                    logger 
+                )
+                estado_actual.pop('esperando_correccion', None)
+                req_data.mensaje_usuario = "" 
             else:
-                print("--- DIAGNÓSTICO: Respuesta de confirmación ambigua. Volviendo a preguntar. ---", flush=True)
+                logger.warning("No se pudo identificar el campo a corregir. Pidiendo aclaración al usuario.")
                 final_response = {
-                    "mensaje_bot": "No entendí tu respuesta. Por favor, responde 'sí' para confirmar o 'no' para cancelar.",
-                    "nuevo_estado": estado_actual,
+                    "mensaje_bot": "No entendí qué información necesitas corregir. Por favor, ¿podrías indicarme el dato específico? (Ej: 'la fecha de la cita', 'mi nombre', 'el número de cédula').",
+                    "nuevo_estado": estado_actual, 
                     "accion": "continuar"
                 }
-                #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
+                return jsonify(final_response)
+
+        elif estado_actual.get('confirmacion_pendiente'):
+            print("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---", flush=True)
+            #logger.info("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---")
+            
+            PROMPT_CLASIFICADOR = f"""
+            Eres un clasificador de intenciones experto. El usuario está viendo un resumen de su cita y le hemos preguntado si confirma.
+            Analiza su respuesta y clasifícala estrictamente en una de estas tres categorías:
+            
+            1.  "confirmar": Si el usuario acepta, confirma, o da una respuesta afirmativa (ej: "sí", "correcto", "perfecto").
+            2.  "cancelar": Si el usuario niega, dice que algo está mal, o da una respuesta negativa (ej: "no", "incorrecto", "no quiero", "cancela").
+            3.  "ambiguo": Si la respuesta no es clara, es una pregunta, o no se relaciona con confirmar o cancelar.
+
+            Responde ÚNICAMENTE con la palabra de la categoría (ej. "confirmar", "cancelar" o "ambiguo").
+
+            Respuesta del usuario: "{req_data.mensaje_usuario}"
+            Categoría:
+            """
+            clasificador_params = {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": PROMPT_CLASIFICADOR}],
+                "temperature": 0.0,
+                "max_tokens": 10
+            }
+
+            intencion_detectada = "ambiguo"
+            try:
+                response_openai = client.chat.completions.create(
+                    model=clasificador_params["model"],
+                    messages=clasificador_params["messages"],
+                    temperature=clasificador_params["temperature"],
+                    max_tokens=clasificador_params["max_tokens"]
+                )
+                
+                intencion = response_openai.choices[0].message.content.strip().lower().replace('"', '').replace("'", '')
+                
+                if intencion in ["confirmar", "cancelar", "ambiguo"]:
+                    intencion_detectada = intencion
+                else:
+                    logger.warning(f"Clasificador devolvió inesperado: '{intencion}'. Tratando como ambiguo.")
+            
+            except (KeyError, IndexError, TypeError, openai.APIError, Exception) as e:
+                logger.error(f"Error procesando respuesta del clasificador: {e}")
+
+            #logger.info(f"--- Intención detectada: '{intencion_detectada}' ---")
+
+            estado_actual.pop('confirmacion_pendiente', None)
+            if intencion_detectada == "confirmar":
+                final_response = {"mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios.", "nuevo_estado": estado_actual, "accion": "finalizado"}
+                return jsonify(final_response)
+            
+            elif intencion_detectada == "cancelar":
+                #logger.info("Intención 'cancelar' (negación) detectada. Iniciando ciclo de corrección.")
+                estado_actual['esperando_correccion'] = True 
+                final_response = {
+                    "mensaje_bot": "Entendido. Por favor, ¿qué dato necesitas corregir?",
+                    "nuevo_estado": estado_actual, 
+                    "accion": "continuar" 
+                }
+                return jsonify(final_response)
+
+            else: 
+                estado_actual['confirmacion_pendiente'] = True
+                final_response = {"mensaje_bot": "No entendí tu respuesta. ¿Los datos del resumen son correctos? Por favor, responde 'sí' para confirmar o 'no' para cancelar.", "nuevo_estado": estado_actual, "accion": "continuar"}
                 return jsonify(final_response)
         
         pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
@@ -2301,7 +2470,6 @@ def orquestar_chat():
             palabras_clave_finalizar = ['terminar', 'finalizar', 'acabar', 'concluir', 'terminemos', 'acabemos', 'cancelar', 'cancela', 'anular', 'descartar', 'ya no', 'no más', 'no mas', 'olvídalo',
             'déjalo así', 'no, gracias', 'no gracias','salir', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye','basta', 'detener', 'parar', 'alto']
             if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
-                #guardar_estado_en_db(db_connection, req_data.flujo_id, estado_actual)
                 return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
             
             palabras_clave_retroceso = ['atrás', 'volver', 'regresar', 'retroceder', 'devolverme','cambiar', 'modificar', 'corregir', 'editar', 'otro', 'otra',
@@ -2327,7 +2495,7 @@ def orquestar_chat():
                     if not coincidencia:
                         coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
         
-        if coincidencia:
+        if coincidencia is not None:
             variable_a_llenar = paso_pendiente.get('variable_salida')
             valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
             estado_actual[variable_a_llenar] = valor_final_para_estado
@@ -2355,14 +2523,45 @@ def orquestar_chat():
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
         else:
             print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)
+            resumen_para_ia = {}
+            print("--- Construyendo resumen legible para confirmación... ---", flush=True)
+            for paso in pasos_ordenados:
+                variable_salida = paso.get('variable_salida')
+                valor_actual = estado_actual.get(variable_salida)
+                
+                es_paso_mostrable = (
+                    paso.get('tipo') == 'TEXT' or
+                    paso.get('tipo') == 'MULTIPLE' or
+                    (paso.get('tipo') == 'API' and paso.get('lista'))
+                )
+
+                if int(paso.get('required') or 0) == 1 and valor_actual is not None and str(valor_actual).strip() != '' and es_paso_mostrable:
+                    nombre_paso = paso.get('nombre', variable_salida) 
+                    valor_amigable = valor_actual 
+                    
+                    if paso.get('data_key') and isinstance(paso.get('data_key'), list) and paso.get('key') and paso.get('valor'):
+                        key_field = paso['key']
+                        value_field = paso['valor']
+                        
+                        if paso['data_key'] and isinstance(paso['data_key'][0], dict):
+                            for item in paso['data_key']:
+                                if isinstance(item, dict) and str(item.get(key_field)).strip().lower() == str(valor_actual).strip().lower():
+                                    valor_amigable = item.get(value_field)
+                                    print(f"  -> Mapeando: '{variable_salida}' (ID: {valor_actual}) -> (Nombre: {valor_amigable})")
+                                    break
+                    
+                    resumen_para_ia[nombre_paso] = valor_amigable
+
+            print(f"--- Resumen construido: {json.dumps(resumen_para_ia, indent=2, ensure_ascii=False)} ---", flush=True)
             nombre_tarea_actual = "Solicitar Confirmación"
             estado_actual['confirmacion_pendiente'] = True
             mensaje_para_prompt = (
                 "La recolección de datos ha terminado. "
-                "Genera un resumen amigable de la cita con los datos del 'Estado actual' "
-                "y pregunta al usuario si desea confirmar (por ejemplo, '¿Es todo correcto?')."
+                "DEBES presentar un resumen de la cita. Para hacerlo, toma el JSON de 'Datos disponibles' y lista CADA CLAVE y CADA VALOR de ese JSON en un formato de lista amigable."
+                "Es CRÍTICO que incluyas TODA la información del JSON. No omitas ningún campo."
+                "Finaliza preguntando si desea confirmar (por ejemplo, '¿Es todo correcto?')."
             )
-            datos_para_siguiente_accion = []
+            datos_para_siguiente_accion = resumen_para_ia
 
         prompt_final = PLANTILLA_PROMPT_BASE.format(
             orq_contexto=flujo_config.get('orq_contexto', ''),
@@ -2386,18 +2585,18 @@ def orquestar_chat():
         gpt_output = json.loads(gpt_output_str)
 
         accion_final = gpt_output.get("accion", "continuar")
-        if nombre_tarea_actual == "Finalizar Conversación":
+        if nombre_tarea_actual == "Informar Error":
+            accion_final = "error" 
+        elif estado_actual.get('confirmacion_pendiente'):
+            accion_final = "continuar"
+        elif not paso_pendiente and not estado_actual.get('confirmacion_pendiente'):
             accion_final = "finalizado"
-        elif nombre_tarea_actual == "Informar Error":
-            accion_final = "error"
         
         final_response = {
             "mensaje_bot": gpt_output.get("mensaje"),
             "nuevo_estado": estado_actual,
             "accion": accion_final
         }
-
-        #guardar_estado_en_db(db_connection, req_data.flujo_id, final_response['nuevo_estado'])
         
         print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
         print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)

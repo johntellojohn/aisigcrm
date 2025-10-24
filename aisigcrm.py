@@ -37,7 +37,7 @@ from langchain.text_splitter import CharacterTextSplitter
 from dotenv import load_dotenv
 import mysql.connector
 from pydantic import BaseModel
-from typing import Dict, Any, List, Union, Tuple
+from typing import Dict, Any, List, Union
 from dateutil.parser import parse, ParserError
 from datetime import time
 import logging

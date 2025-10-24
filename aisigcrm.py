@@ -37,7 +37,7 @@ from langchain.text_splitter import CharacterTextSplitter
 from dotenv import load_dotenv
 import mysql.connector
 from pydantic import BaseModel
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Tuple
 from dateutil.parser import parse, ParserError
 from datetime import time
 import logging
@@ -2514,10 +2514,34 @@ def orquestar_chat():
             print(f"--- DIAGNÓSTICO: Siguiente paso pendiente encontrado: '{paso_pendiente.get('nombre')}' (Variable: '{paso_pendiente.get('variable_salida')}') ---", flush=True)
             if paso_pendiente.get('sin_datos'):
                 nombre_tarea_actual = "Informar Error"
-                nombre_paso_error = paso_pendiente.get('nombre', 'el paso anterior')
-                nombre_paso_amigable = traducir_variable_a_texto_humano(nombre_paso_error)
-                mensaje_para_prompt = f"Contexto de error: El sistema no encontró opciones para '{nombre_paso_amigable}'. Informa al usuario amablemente y sugiere que intente de nuevo o cambie una opción anterior."
+                
+                # Identificar el tipo de error y el paso que falló
+                tipo_error = paso_pendiente.get('error_api', 'ERROR_INESPERADO')
+                nombre_paso_error = paso_pendiente.get('nombre', 'el paso actual')
+                nombre_paso_amigable_IA = traducir_variable_a_texto_humano(nombre_paso_error) 
+
+                print(f"--- Error detectado: {tipo_error} en el paso '{nombre_paso_amigable_IA}' ---", flush=True)
+
+                # Revertir el estado Y OBTENER QUÉ PASO SE REVIRTIÓ
                 estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+
+                if tipo_error == 'DOCUMENTO_NO_ENCONTRADO':
+                    mensaje_para_prompt = f"""
+                    Contexto de error: El usuario ingresó un dato para el paso '{nombre_paso_amigable_IA}', pero la validación del sistema falló (no se encontró o es inválido).
+                    Tarea: Informa al usuario de manera amigable que el dato que proporcionó no es válido. Pídele que por favor ingrese la información nuevamente.
+                    """
+                
+                elif tipo_error == 'LISTA_VACIA':
+                    mensaje_para_prompt = f"""
+                    Contexto de error: El sistema intentó buscar opciones para el paso {nombre_paso_amigable_IA}, pero no encontró ninguna disponible.
+                    Tarea: Informa al usuario de manera amigable sobre el error. Pídele al usuario que por favor elija una opción diferente.
+                    """
+                
+                else: # ERROR_CONEXION, ERROR_SERVIDOR, ERROR_INESPERADO
+                    mensaje_para_prompt = f"""
+                    Contexto de error: Hubo un problema técnico (como un error de conexión) al intentar obtener la información para '{nombre_paso_amigable_IA}'.
+                    Tarea: Informa al usuario amablemente sobre este problema técnico y pídele que por favor lo intente de nuevo (simplemente volviendo a enviar su último mensaje).
+                    """
             else:
                 nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
                 datos_para_siguiente_accion = paso_pendiente.get('data', []) or []

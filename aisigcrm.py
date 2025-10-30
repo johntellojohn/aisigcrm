@@ -2285,7 +2285,6 @@ def orquestar_chat():
     PLANTILLA_PROMPT_BASE = """
     # CONTEXTO Y PERSONALIDAD
     {orq_contexto}
-    Tu misión es ayudar al usuario a completar un proceso paso a paso. En tu interacción inicial, menciona amablemente que para hacer el proceso más rápido y efectivo, es ideal que sus respuestas sean directas (por ejemplo, eligiendo el número de una opción o escribiendo directamente el dato solicitado).
     ---
     # TONO DE VOZ
     {orq_tono}
@@ -2442,7 +2441,7 @@ def orquestar_chat():
 
             estado_actual.pop('confirmacion_pendiente', None)
             if intencion_detectada == "confirmar":
-                final_response = {"mensaje_bot": "¡Perfecto! Tu cita ha sido agendada con éxito. Gracias por utilizar nuestros servicios.", "nuevo_estado": estado_actual, "accion": "finalizado"}
+                final_response = { "mensaje_bot": "¡Perfecto! Los datos están confirmados.", "nuevo_estado": estado_actual, "accion": "finalizado"}
                 return jsonify(final_response)
             
             elif intencion_detectada == "cancelar":

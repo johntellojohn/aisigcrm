@@ -1959,7 +1959,11 @@ def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dic
                     
                     elif response.status_code in [204, 300]:
                         paso['sin_datos'] = True
-                        paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
+                        if paso.get('lista'):
+                            paso['error_api'] = 'LISTA_VACIA'
+                            print(f"Advertencia: La API para '{paso.get('nombre')}' devolvió {response.status_code} (Interpretado como Lista Vacía).", flush=True)
+                        else:
+                            paso['error_api'] = 'DOCUMENTO_NO_ENCONTRADO'
                     
                     elif response.status_code == 500:
                         paso['sin_datos'] = True
@@ -2069,7 +2073,7 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
     mensaje_normalizado = unidecode(mensaje_usuario.lower().strip())
     palabras_usuario = set(re.findall(r'\b\w+\b', mensaje_normalizado))
     
-    stop_words = {'con', 'el', 'la', 'los', 'las', 'de', 'del', 'un', 'una', 'dr', 'doctor', 'a', 'dra', 'doctora'}
+    stop_words = {'con', 'el', 'la', 'los', 'las', 'de', 'del', 'un', 'una', 'dr', 'doctor', 'a', 'dra', 'doctora', 'quiero', 'con', 'para'}
     palabras_usuario_significativas = palabras_usuario - stop_words
 
     if not palabras_usuario_significativas:
@@ -2083,14 +2087,16 @@ def encontrar_coincidencia_local(mensaje_usuario: str, opciones: list) -> str:
         
         if mensaje_normalizado == opcion_normalizada:
             return opcion
-
-        palabras_opcion = set(re.findall(r'\b\w+\b', opcion_normalizada))
         
-        if palabras_usuario_significativas.issubset(palabras_opcion):
-            puntuacion = len(palabras_usuario_significativas)
-            if puntuacion > max_puntuacion:
-                max_puntuacion = puntuacion
-                mejor_coincidencia = opcion
+        palabras_opcion = set(re.findall(r'\b\w+\b', opcion_normalizada))
+        palabras_opcion_significativas = palabras_opcion - stop_words
+        
+        interseccion = palabras_usuario_significativas.intersection(palabras_opcion_significativas)
+        puntuacion = len(interseccion)
+        
+        if puntuacion > max_puntuacion:
+            max_puntuacion = puntuacion
+            mejor_coincidencia = opcion
 
     return mejor_coincidencia if max_puntuacion > 0 else None
 
@@ -2300,6 +2306,7 @@ def orquestar_chat():
     2.  **PROHIBICIÓN:** NO debes preguntar por ningún otro dato. NO resumas la información que falta. NO pidas múltiples datos a la vez. Céntrate únicamente en la `TAREA ACTUAL`.
     3.  **USO DE DATOS:** Si se proporcionan `Datos disponibles` (como una lista de opciones), DEBES incluirlos en tu pregunta para que el usuario pueda elegir.
     4.  **CONFIRMACIÓN:** Cuando la TAREA ACTUAL sea "Solicitar Confirmación", DEBES presentar un resumen claro y legible usando el JSON de resumen proporcionado en `Datos disponibles`. **NO uses el `{estado_json}` para el resumen**, ya que contiene IDs internos.
+    5.  **REGLA DE LISTA ÚNICA:** Si la lista de `Datos disponibles` contiene **un solo ítem**, NO debes cambiar la pregunta a una confirmación de sí/no. DEBES presentar ese único ítem como una lista numerada (ej. "Por favor, elige una opción:<br>1. [Nombre del ítem]") y pedir al usuario que seleccione.
     ---
     **TU PROCESO DE DECISIÓN COMO IA (Instrucciones Fijas):**
 
@@ -2514,29 +2521,91 @@ def orquestar_chat():
             if paso_pendiente.get('sin_datos'):
                 nombre_tarea_actual = "Informar Error"
                 
-                # Identificar el tipo de error y el paso que falló
                 tipo_error = paso_pendiente.get('error_api', 'ERROR_INESPERADO')
                 nombre_paso_error = paso_pendiente.get('nombre', 'el paso actual')
                 nombre_paso_amigable_IA = traducir_variable_a_texto_humano(nombre_paso_error) 
 
                 print(f"--- Error detectado: {tipo_error} en el paso '{nombre_paso_amigable_IA}' ---", flush=True)
 
-                # Revertir el estado Y OBTENER QUÉ PASO SE REVIRTIÓ
-                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                # Identificamos el último dato que el usuario SÍ seleccionó, para dar contexto.
+                ultimo_paso_exitoso_nombre = "tu selección anterior"
+                pasos_requeridos_llenos = [p['nombre'] for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and estado_actual.get(p.get('variable_salida'))]
+                if pasos_requeridos_llenos:
+                    # Toma el nombre del último paso que SÍ tiene un valor
+                    ultimo_paso_exitoso_nombre = traducir_variable_a_texto_humano(pasos_requeridos_llenos[-1])
 
                 if tipo_error == 'DOCUMENTO_NO_ENCONTRADO':
+                    #print(f"--- Tipo de error ({tipo_error}) implica dato de entrada inválido. Revirtiendo... ---", flush=True)
+                    # Revertimos el estado para que vuelva a pedir el dato que causó el error.
+                    estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                    
                     mensaje_para_prompt = f"""
-                    Contexto de error: El usuario ingresó un dato para el paso '{nombre_paso_amigable_IA}', pero la validación del sistema falló (no se encontró o es inválido).
-                    Tarea: Informa al usuario de manera amigable que el dato que proporcionó no es válido. Pídele que por favor ingrese la información nuevamente.
+                    Contexto de error: El sistema intentó validar el dato para el paso '{nombre_paso_amigable_IA}' (posiblemente usando '{ultimo_paso_exitoso_nombre}'), pero la validación falló. El dato proporcionado no se encontró o es inválido.
+                    Tarea: Informa al usuario de manera amigable que el dato que proporcionó (relacionado a '{ultimo_paso_exitoso_nombre}') parece ser incorrecto o no es válido. Pídele que por favor verifique y vuelva a ingresar la información para el paso anterior.
                     """
                 
                 elif tipo_error == 'LISTA_VACIA':
+                    #print(f"--- Tipo de error ({tipo_error}). Informando al usuario Y revirtiendo automáticamente. ---", flush=True)
+                    
+                    ultimo_paso_lleno = None
+                    pasos_requeridos = [p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida')]
+                    for paso in reversed(pasos_requeridos):
+                        variable_salida = paso.get('variable_salida')
+                        if estado_actual.get(variable_salida):
+                            ultimo_paso_lleno = paso
+                            break 
+                    
+                    contexto_amigable_valor = "tu selección anterior" 
+                    if ultimo_paso_lleno:
+                        variable_salida_anterior = ultimo_paso_lleno['variable_salida']
+                        valor_id_actual = estado_actual.get(variable_salida_anterior) 
+                        
+                        valor_amigable_mapeado = None
+                        if ultimo_paso_lleno.get('data_key') and isinstance(ultimo_paso_lleno.get('data_key'), list) and ultimo_paso_lleno.get('key') and ultimo_paso_lleno.get('valor'):
+                            key_field = ultimo_paso_lleno['key']
+                            value_field = ultimo_paso_lleno['valor'] 
+                            for item in ultimo_paso_lleno.get('data_key', []):
+                                if isinstance(item, dict) and str(item.get(key_field)).strip() == str(valor_id_actual).strip():
+                                    valor_amigable_mapeado = item.get(value_field)
+                                    break
+                        
+                        if valor_amigable_mapeado:
+                            contexto_amigable_valor = valor_amigable_mapeado
+                        elif valor_id_actual:
+                            contexto_amigable_valor = valor_id_actual
+
+                    estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                    
+                    paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
+                    
+                    if paso_pendiente:
+                        nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
+                        datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
+                    else:
+                        nombre_tarea_actual = "Informar Error"
+                        datos_para_siguiente_accion = []
+
                     mensaje_para_prompt = f"""
-                    Contexto de error: El sistema intentó buscar opciones para el paso {nombre_paso_amigable_IA}, pero no encontró ninguna disponible.
-                    Tarea: Informa al usuario de manera amigable sobre el error. Pídele al usuario que por favor elija una opción diferente.
+                    # CONTEXTO DEL ERROR (¡MUY IMPORTANTE!)
+                    El usuario había seleccionado previamente '{contexto_amigable_valor}', pero no se encontraron opciones para esa selección.
+                    El sistema ha regresado automáticamente al paso anterior.
+
+                    # TU TAREA
+                    1.  **Informar:** Informa al usuario de forma natural lo que pasó (ej. "Parece que no hay fechas para '{contexto_amigable_valor}'").
+                    2.  **Replantear:** Inmediatamente después, ejecuta la `TAREA ACTUAL` y volver a pedir que seleccione una nueva opcion del paso anterior).
+                    
+                    # REGLAS PARA LA RESPUESTA
+                    - Tu respuesta debe estar en una sola intervención.
+                    - La `TAREA ACTUAL` es ahora: {nombre_tarea_actual}.
+                    - Los `Datos disponibles` (que DEBES mostrar) son la lista para esa tarea.
+                    
+                    # EJEMPLO DE RESPUESTA COMBINADA (Guía de tono):
+                    "Parece que no hay fechas disponibles para el/la Dr(a). Toapanta Pinta. Por favor, elegir otro doctor de la lista"
                     """
-                
+
                 else: # ERROR_CONEXION, ERROR_SERVIDOR, ERROR_INESPERADO
+                    #print(f"--- Tipo de error ({tipo_error}). Informando al usuario SIN revertir el estado. ---", flush=True)
+                    #pedimos reintentar.
                     mensaje_para_prompt = f"""
                     Contexto de error: Hubo un problema técnico (como un error de conexión) al intentar obtener la información para '{nombre_paso_amigable_IA}'.
                     Tarea: Informa al usuario amablemente sobre este problema técnico y pídele que por favor lo intente de nuevo (simplemente volviendo a enviar su último mensaje).

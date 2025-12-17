@@ -41,11 +41,34 @@ from typing import Dict, Any, List, Union
 from dateutil.parser import parse, ParserError
 from datetime import time
 import logging
+from mysql.connector import pooling
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
 
 load_dotenv()
+DB_HOST = os.getenv("DB_HOST")
+DB_USERNAME = os.getenv("DB_USERNAME")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_DATABASE_FALLBACK = os.getenv("DB_DATABASE")
+
+#print("--- Inicializando Pool de Conexiones MySQL ---", flush=True)
+db_config = {
+    "host": DB_HOST,
+    "user": DB_USERNAME,
+    "password": DB_PASSWORD,
+    "database": DB_DATABASE_FALLBACK,
+    "pool_name": "crm_pool",
+    "pool_size": 10,
+    "pool_reset_session": True
+}
+
+try:
+    connection_pool = pooling.MySQLConnectionPool(**db_config)
+    print("--- Pool de Conexiones Creado Exitosamente ---", flush=True)
+except Exception as e:
+    print(f"!!! Error FATAL creando el pool de conexiones: {e} !!!", flush=True)
+    connection_pool = None
 
 logging.basicConfig(
     level=logging.INFO, 
@@ -1831,30 +1854,62 @@ class ChatResponse(BaseModel):
     nuevo_estado: dict
 
 def get_db_session(database_name=None):
-    """Proporciona una conexión a la base de datos.
-    Se conecta a 'database_name' si se especifica, si no, usa el valor de respaldo del .env."""
+    """
+    Obtiene una conexión del pool y cambia dinámicamente a la base de datos solicitada.
+    """
     db = None
     final_db_name = database_name if database_name else DB_DATABASE_FALLBACK
     
     if not final_db_name:
-        print("--- ERROR: No se ha especificado un nombre de base de datos para la conexión. ---", flush=True)
+        print("--- ERROR: No se ha especificado un nombre de base de datos. ---", flush=True)
         raise ValueError("Nombre de base de datos no especificado.")
 
     try:
-        print(f"--- Intentando conectar a la base de datos: {final_db_name} ---", flush=True)
-        db = mysql.connector.connect(
-            host=DB_HOST,
-            user=DB_USERNAME,
-            password=DB_PASSWORD,
-            database=final_db_name 
-        )
+        if connection_pool:
+            db = connection_pool.get_connection()
+            
+            if db.database != final_db_name:
+                try:
+                    cursor_switch = db.cursor()
+                    cursor_switch.execute(f"USE {final_db_name}")
+                    cursor_switch.close()
+                    
+                    db.database = final_db_name
+                    
+                    #print(f"--- Switching DB EXITOSO: Ahora conectado a '{final_db_name}' ---", flush=True)
+                except Exception as e_switch:
+                    print(f"!!! Error al cambiar de DB con USE: {e_switch} !!!", flush=True)
+                    raise
+        else:
+            print("--- Advertencia: Usando conexión directa (sin pool) ---", flush=True)
+            db = mysql.connector.connect(
+                host=DB_HOST,
+                user=DB_USERNAME,
+                password=DB_PASSWORD,
+                database=final_db_name 
+            )
+
         yield db
+
     except mysql.connector.Error as err:
         print(f"Error de conexión a la base de datos '{final_db_name}': {err}", flush=True)
+        if db and db.is_connected():
+            db.close() 
         raise
-    finally:
+    except Exception as e:
+        print(f"Error general obteniendo sesión de DB: {e}", flush=True)
         if db and db.is_connected():
             db.close()
+        raise
+    finally:
+        try:
+            if db:
+                if db.is_connected():
+                    db.close()
+        except AttributeError:
+            pass
+        except Exception as e:
+            print(f"Advertencia cerrando conexión: {e}", flush=True)
 
 def llenar_datos_desde_api(estado_actual: Dict[str, Any], pasos_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Llama a las APIs externas y guarda el estado del resultado, incluyendo errores específicos."""
@@ -2344,6 +2399,17 @@ def orquestar_chat():
         db_connection = next(db_generator)
         cursor = db_connection.cursor(dictionary=True)
         
+        try:
+            cursor.execute("SELECT DATABASE() as db_actual")
+            db_check = cursor.fetchone()
+            #print(f"DEBUG CRÍTICO SQL: MySQL dice que está conectado a: {db_check}", flush=True)
+
+            cursor.execute("SELECT count(*) as total FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
+            count_check = cursor.fetchone()
+            #print(f"DEBUG CRÍTICO SQL: Buscando ID {req_data.flujo_id} en tabla 'auto_detalle'. Encontrados: {count_check}", flush=True)
+        except Exception as e_debug:
+            print(f"DEBUG ERROR: Falló el bloque de diagnóstico: {e_debug}", flush=True)
+
         cursor.execute("SELECT orq_contexto, orq_tono, orq_reglas, orq_respuestas, orq_formato_respuestas FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
         flujo_config = cursor.fetchone()
         

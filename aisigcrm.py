@@ -2333,31 +2333,33 @@ def invalidar_pasos_dependientes(variable_a_invalidar: str, estado_actual: Dict[
 def orquestar_chat():
     db_connection = None
     cursor = None
-    try:
-        logger = logging.getLogger(__name__)
-        print(" NUEVA PETICIÓN V2 A /api/orquestador_gpt ", flush=True)
-        print("**************************************************", flush=True)
-        print("\n--- DATOS CRUDOS RECIBIDOS DE LARAVEL ---", flush=True)
-        print(json.dumps(request.json, indent=2, ensure_ascii=False), flush=True)
-        req_data = ChatRequest(**request.json)
-    
-        print(f"--- [DEBUG] 1. Iniciando conexión para DB: {req_data.db_name} ---", flush=True)
-        try:
-            db_name_from_laravel = request.json.get('db_name')
-            if not db_name_from_laravel:
-                raise ValueError("El parámetro 'db_name' es requerido.")
 
-            print("--- [DEBUG] 2. Llamando a get_db_session ---", flush=True)
-            db_generator = get_db_session(database_name=db_name_from_laravel)
-            
-            print("--- [DEBUG] 3. Intentando obtener el objeto conexión ---", flush=True)
-            db_connection = next(db_generator)
-            
-            print("--- [DEBUG] 4. Conexión obtenida. Creando cursor... ---", flush=True)
-            cursor = db_connection.cursor(dictionary=True)
-        except Exception as e:
-            print(f"--- [DEBUG] ERROR EN CONEXIÓN: {e} ---", flush=True)
-            return jsonify({"error": "Error de conexión DB"}), 500
+    logger = logging.getLogger(__name__)
+    print(" NUEVA PETICIÓN V2 A /api/orquestador_gpt ", flush=True)
+    print("**************************************************", flush=True)
+    print("\n--- DATOS CRUDOS RECIBIDOS DE LARAVEL ---", flush=True)
+    print(json.dumps(request.json, indent=2, ensure_ascii=False), flush=True)
+    req_data = ChatRequest(**request.json)
+
+    print(f"--- [DEBUG] 1. Iniciando conexión para DB: {req_data.db_name} ---", flush=True)
+    
+    try:
+        db_name_from_laravel = request.json.get('db_name')
+        if not db_name_from_laravel:
+            raise ValueError("El parámetro 'db_name' es requerido.")
+
+        print("--- [DEBUG] 2. Llamando a get_db_session ---", flush=True)
+        db_generator = get_db_session(database_name=db_name_from_laravel)
+        
+        print("--- [DEBUG] 3. Intentando obtener el objeto conexión ---", flush=True)
+        db_connection = next(db_generator)
+        
+        print("--- [DEBUG] 4. Conexión obtenida. Creando cursor... ---", flush=True)
+        cursor = db_connection.cursor(dictionary=True)
+    
+    except Exception as e:
+        print(f"--- [DEBUG] ERROR EN CONEXIÓN: {e} ---", flush=True)
+        return jsonify({"error": "Error de conexión DB"}), 500
 
     PLANTILLA_PROMPT_BASE = """
     # CONTEXTO Y PERSONALIDAD

@@ -1856,56 +1856,70 @@ class ChatResponse(BaseModel):
 def get_db_session(database_name=None):
     """
     Obtiene una conexión del pool y cambia dinámicamente a la base de datos solicitada.
+
     """
+    print(f"--- [DEBUG INTERNAL] Entrando a get_db_session. DB solicitada: {database_name} ---", flush=True)
+    
     db = None
     final_db_name = database_name if database_name else DB_DATABASE_FALLBACK
     
     if not final_db_name:
-        print("--- ERROR: No se ha especificado un nombre de base de datos. ---", flush=True)
+        print("--- [ERROR INTERNAL] No DB Name provided ---", flush=True)
         raise ValueError("Nombre de base de datos no especificado.")
 
     try:
         if connection_pool:
+            print(f"--- [DEBUG INTERNAL] Usando Connection Pool. Pool Name: {db_config.get('pool_name')} ---", flush=True)
+            print("--- [DEBUG INTERNAL] Solicitando conexión al pool (esto puede bloquearse si el pool está lleno)... ---", flush=True)
+            
             db = connection_pool.get_connection()
             
+            print(f"--- [DEBUG INTERNAL] Conexión obtenida del pool. ID Conexión: {db.connection_id} ---", flush=True)
+            
+            print(f"--- [DEBUG INTERNAL] DB actual de la conexión: {db.database}. DB deseada: {final_db_name} ---", flush=True)
             if db.database != final_db_name:
                 try:
+                    print(f"--- [DEBUG INTERNAL] Ejecutando USE {final_db_name}... ---", flush=True)
                     cursor_switch = db.cursor()
                     cursor_switch.execute(f"USE {final_db_name}")
                     cursor_switch.close()
-                    
                     db.database = final_db_name
-                    
-                    #print(f"--- Switching DB EXITOSO: Ahora conectado a '{final_db_name}' ---", flush=True)
+                    print(f"--- [DEBUG INTERNAL] Cambio de DB exitoso ---", flush=True)
                 except Exception as e_switch:
-                    print(f"!!! Error al cambiar de DB con USE: {e_switch} !!!", flush=True)
+                    print(f"!!! [ERROR INTERNAL] Falló el USE {final_db_name}: {e_switch} !!!", flush=True)
                     raise
         else:
-            print("--- Advertencia: Usando conexión directa (sin pool) ---", flush=True)
+            print("--- [DEBUG INTERNAL] No hay Pool disponible. Creando conexión directa... ---", flush=True)
             db = mysql.connector.connect(
                 host=DB_HOST,
                 user=DB_USERNAME,
                 password=DB_PASSWORD,
                 database=final_db_name 
             )
+            print("--- [DEBUG INTERNAL] Conexión directa establecida ---", flush=True)
 
+        print("--- [DEBUG INTERNAL] Haciendo YIELD de la conexión ---", flush=True)
         yield db
 
     except mysql.connector.Error as err:
-        print(f"Error de conexión a la base de datos '{final_db_name}': {err}", flush=True)
+        print(f"!!! [ERROR CRITICO SQL] Error de conexión a '{final_db_name}': {err} !!!", flush=True)
         if db and db.is_connected():
             db.close() 
         raise
     except Exception as e:
-        print(f"Error general obteniendo sesión de DB: {e}", flush=True)
+        print(f"!!! [ERROR CRITICO GENERAL] en get_db_session: {e} !!!", flush=True)
         if db and db.is_connected():
             db.close()
         raise
     finally:
+        print("--- [DEBUG INTERNAL] Finalizando generador (Finally block) ---", flush=True)
         try:
             if db:
                 if db.is_connected():
                     db.close()
+                    print("--- [DEBUG INTERNAL] Conexión cerrada/devuelta al pool ---", flush=True)
+                else:
+                    print("--- [DEBUG INTERNAL] La conexión ya estaba cerrada ---", flush=True)
         except AttributeError:
             pass
         except Exception as e:

@@ -2412,372 +2412,370 @@ def orquestar_chat():
         
         print(f"--- [DEBUG] Iniciando conexión ÚNICA para DB: {db_name_from_laravel} ---", flush=True)
         
-        db_generator = get_db_session(database_name=db_name_from_laravel)
-        db_connection = next(db_generator)
-        cursor = db_connection.cursor(dictionary=True)
-        
-        try:
-            cursor.execute("SELECT DATABASE() as db_actual")
-            db_check = cursor.fetchone()
-            #print(f"DEBUG CRÍTICO SQL: MySQL dice que está conectado a: {db_check}", flush=True)
-
-            cursor.execute("SELECT count(*) as total FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
-            count_check = cursor.fetchone()
-            #print(f"DEBUG CRÍTICO SQL: Buscando ID {req_data.flujo_id} en tabla 'auto_detalle'. Encontrados: {count_check}", flush=True)
-        except Exception as e_debug:
-            print(f"DEBUG ERROR: Falló el bloque de diagnóstico: {e_debug}", flush=True)
-
-        cursor.execute("SELECT orq_contexto, orq_tono, orq_reglas, orq_respuestas, orq_formato_respuestas FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
-        flujo_config = cursor.fetchone()
-        
-        sql_query = """
-            SELECT adev.nombre, adev.tipo, adev.order, adev.variable_salida, adev.data, adev.required,
-                   adev.url, adev.method, adev.parametros_requeridos, adev.lista, adev.valor, adev.key,
-                   av.default_value AS default_value
-            FROM auto_detalle_estado_variable AS adev
-            LEFT JOIN auto_variables AS av ON adev.variable_id = av.id
-            WHERE adev.auto_detalle_id = %s
-        """
-        cursor.execute(sql_query, (req_data.flujo_id,))
-        pasos_config = cursor.fetchall()
-        for paso in pasos_config:
-            if paso.get('tipo') == 'MULTIPLE' and paso.get('data') and isinstance(paso.get('data'), str):
-                paso['data'] = [item.strip() for item in paso['data'].split(';')]
-        
-        if not flujo_config:
-            return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
-
-        estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
-        estado_actual = estado_base.copy()
-        estado_recibido_laravel = req_data.estado_actual or {}
-        estado_actual.update(estado_recibido_laravel)
-
-        if estado_actual.get('esperando_correccion'):
-            #logger.info("Estado: esperando_correccion = True. Intentando identificar campo...")
-            campos_corregibles_map = {
-                p['nombre']: p['variable_salida'] 
-                for p in pasos_config 
-                if p.get('variable_salida') and p.get('nombre') and int(p.get('required') or 0) == 1
-            }
-            
-            variable_a_corregir = identificar_campo_a_corregir_con_ia(
-                req_data.mensaje_usuario, 
-                campos_corregibles_map
-            )
-
-            if variable_a_corregir:
-                logger.info(f"Campo a corregir identificado: {variable_a_corregir}. Invalidando y procediendo a re-preguntar.")
-                estado_actual = invalidar_pasos_dependientes(
-                    variable_a_corregir,
-                    estado_actual,
-                    pasos_config,  
-                    logger 
-                )
-                estado_actual.pop('esperando_correccion', None)
-                req_data.mensaje_usuario = "" 
-            else:
-                logger.warning("No se pudo identificar el campo a corregir. Pidiendo aclaración al usuario.")
-                final_response = {
-                    "mensaje_bot": "No entendí qué información necesitas corregir. Por favor, ¿podrías indicarme el dato específico? (Ej: 'la fecha de la cita', 'mi nombre', 'el número de cédula').",
-                    "nuevo_estado": estado_actual, 
-                    "accion": "continuar"
-                }
-                return jsonify(final_response)
-
-        elif estado_actual.get('confirmacion_pendiente'):
-            print("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---", flush=True)
-            #logger.info("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---")
-            
-            PROMPT_CLASIFICADOR = f"""
-            Eres un clasificador de intenciones experto. El usuario está viendo un resumen de su cita y le hemos preguntado si confirma.
-            Analiza su respuesta y clasifícala estrictamente en una de estas tres categorías:
-            
-            1.  "confirmar": Si el usuario acepta, confirma, o da una respuesta afirmativa (ej: "sí", "correcto", "perfecto").
-            2.  "cancelar": Si el usuario niega, dice que algo está mal, o da una respuesta negativa (ej: "no", "incorrecto", "no quiero", "cancela").
-            3.  "ambiguo": Si la respuesta no es clara, es una pregunta, o no se relaciona con confirmar o cancelar.
-
-            Responde ÚNICAMENTE con la palabra de la categoría (ej. "confirmar", "cancelar" o "ambiguo").
-
-            Respuesta del usuario: "{req_data.mensaje_usuario}"
-            Categoría:
-            """
-            clasificador_params = {
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": PROMPT_CLASIFICADOR}],
-                "temperature": 0.0,
-                "max_tokens": 10
-            }
-
-            intencion_detectada = "ambiguo"
+        with get_db_session(database_name=db_name_from_laravel) as db_connection:
+            cursor = db_connection.cursor(dictionary=True)
             try:
-                response_openai = client.chat.completions.create(
-                    model=clasificador_params["model"],
-                    messages=clasificador_params["messages"],
-                    temperature=clasificador_params["temperature"],
-                    max_tokens=clasificador_params["max_tokens"]
-                )
-                
-                intencion = response_openai.choices[0].message.content.strip().lower().replace('"', '').replace("'", '')
-                
-                if intencion in ["confirmar", "cancelar", "ambiguo"]:
-                    intencion_detectada = intencion
-                else:
-                    logger.warning(f"Clasificador devolvió inesperado: '{intencion}'. Tratando como ambiguo.")
-            
-            except (KeyError, IndexError, TypeError, openai.APIError, Exception) as e:
-                logger.error(f"Error procesando respuesta del clasificador: {e}")
+                cursor.execute("SELECT DATABASE() as db_actual")
+                db_check = cursor.fetchone()
+                #print(f"DEBUG CRÍTICO SQL: MySQL dice que está conectado a: {db_check}", flush=True)
 
-            #logger.info(f"--- Intención detectada: '{intencion_detectada}' ---")
+                cursor.execute("SELECT count(*) as total FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
+                count_check = cursor.fetchone()
+                #print(f"DEBUG CRÍTICO SQL: Buscando ID {req_data.flujo_id} en tabla 'auto_detalle'. Encontrados: {count_check}", flush=True)
+            except Exception as e_debug:
+                print(f"DEBUG ERROR: Falló el bloque de diagnóstico: {e_debug}", flush=True)
 
-            estado_actual.pop('confirmacion_pendiente', None)
-            if intencion_detectada == "confirmar":
-                final_response = { "mensaje_bot": "¡Perfecto! Los datos están confirmados.", "nuevo_estado": estado_actual, "accion": "finalizado"}
-                return jsonify(final_response)
+            cursor.execute("SELECT orq_contexto, orq_tono, orq_reglas, orq_respuestas, orq_formato_respuestas FROM auto_detalle WHERE id = %s", (req_data.flujo_id,))
+            flujo_config = cursor.fetchone()
             
-            elif intencion_detectada == "cancelar":
-                #logger.info("Intención 'cancelar' (negación) detectada. Iniciando ciclo de corrección.")
-                estado_actual['esperando_correccion'] = True 
-                final_response = {
-                    "mensaje_bot": "Entendido. Por favor, ¿qué dato necesitas corregir?",
-                    "nuevo_estado": estado_actual, 
-                    "accion": "continuar" 
+            sql_query = """
+                SELECT adev.nombre, adev.tipo, adev.order, adev.variable_salida, adev.data, adev.required,
+                    adev.url, adev.method, adev.parametros_requeridos, adev.lista, adev.valor, adev.key,
+                    av.default_value AS default_value
+                FROM auto_detalle_estado_variable AS adev
+                LEFT JOIN auto_variables AS av ON adev.variable_id = av.id
+                WHERE adev.auto_detalle_id = %s
+            """
+            cursor.execute(sql_query, (req_data.flujo_id,))
+            pasos_config = cursor.fetchall()
+            for paso in pasos_config:
+                if paso.get('tipo') == 'MULTIPLE' and paso.get('data') and isinstance(paso.get('data'), str):
+                    paso['data'] = [item.strip() for item in paso['data'].split(';')]
+            
+            if not flujo_config:
+                return jsonify({"error": f"Flujo con id {req_data.flujo_id} no encontrado."}), 404
+
+            estado_base = {paso.get('variable_salida'): paso.get('default_value') for paso in pasos_config if paso.get('variable_salida')}
+            estado_actual = estado_base.copy()
+            estado_recibido_laravel = req_data.estado_actual or {}
+            estado_actual.update(estado_recibido_laravel)
+
+            if estado_actual.get('esperando_correccion'):
+                #logger.info("Estado: esperando_correccion = True. Intentando identificar campo...")
+                campos_corregibles_map = {
+                    p['nombre']: p['variable_salida'] 
+                    for p in pasos_config 
+                    if p.get('variable_salida') and p.get('nombre') and int(p.get('required') or 0) == 1
                 }
-                return jsonify(final_response)
-
-            else: 
-                estado_actual['confirmacion_pendiente'] = True
-                final_response = {"mensaje_bot": "No entendí tu respuesta. ¿Los datos del resumen son correctos? Por favor, responde 'sí' para confirmar o 'no' para cancelar.", "nuevo_estado": estado_actual, "accion": "continuar"}
-                return jsonify(final_response)
-        
-        pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
-        pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
-
-        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
-        coincidencia = None
-
-        if paso_pendiente and req_data.mensaje_usuario:
-            palabras_clave_finalizar = ['terminar', 'finalizar', 'acabar', 'concluir', 'terminemos', 'acabemos', 'cancelar', 'cancela', 'anular', 'descartar', 'ya no', 'no más', 'no mas', 'olvídalo',
-            'déjalo así', 'no, gracias', 'no gracias','salir', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye','basta', 'detener', 'parar', 'alto']
-            if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
-                return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
-            
-            palabras_clave_retroceso = ['atrás', 'volver', 'regresar', 'retroceder', 'devolverme','cambiar', 'modificar', 'corregir', 'editar', 'otro', 'otra',
-            'elegir otro', 'elegir otra', 'quiero otro', 'quiero otra','me equivoqué', 'error', 'anterior', 'el paso anterior', 'la opción anterior', 'lo de antes', 'dejame volver', 'déjame volver']
-            if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
-                estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-                paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
-                req_data.mensaje_usuario = ""
-            
-            if req_data.mensaje_usuario and paso_pendiente:
-                valor_usuario = req_data.mensaje_usuario.strip()
-                tipo_paso = paso_pendiente.get('tipo')
                 
-                opciones_disponibles = paso_pendiente.get('data', []) or []
-                
-                if tipo_paso == 'TEXT':
-                    coincidencia = valor_usuario
-                elif tipo_paso in ['MULTIPLE', 'API']:
-                    if not coincidencia and valor_usuario.isdigit():
-                        indice = int(valor_usuario) - 1
-                        if 0 <= indice < len(opciones_disponibles):
-                            coincidencia = opciones_disponibles[indice]
-                    if not coincidencia:
-                        coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
-        
-        if coincidencia is not None:
-            variable_a_llenar = paso_pendiente.get('variable_salida')
-            valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
-            estado_actual[variable_a_llenar] = valor_final_para_estado
-            print(f"--- Estado actualizado: '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
+                variable_a_corregir = identificar_campo_a_corregir_con_ia(
+                    req_data.mensaje_usuario, 
+                    campos_corregibles_map
+                )
 
-            req_data.mensaje_usuario = ""
+                if variable_a_corregir:
+                    logger.info(f"Campo a corregir identificado: {variable_a_corregir}. Invalidando y procediendo a re-preguntar.")
+                    estado_actual = invalidar_pasos_dependientes(
+                        variable_a_corregir,
+                        estado_actual,
+                        pasos_config,  
+                        logger 
+                    )
+                    estado_actual.pop('esperando_correccion', None)
+                    req_data.mensaje_usuario = "" 
+                else:
+                    logger.warning("No se pudo identificar el campo a corregir. Pidiendo aclaración al usuario.")
+                    final_response = {
+                        "mensaje_bot": "No entendí qué información necesitas corregir. Por favor, ¿podrías indicarme el dato específico? (Ej: 'la fecha de la cita', 'mi nombre', 'el número de cédula').",
+                        "nuevo_estado": estado_actual, 
+                        "accion": "continuar"
+                    }
+                    return jsonify(final_response)
+
+            elif estado_actual.get('confirmacion_pendiente'):
+                print("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---", flush=True)
+                #logger.info("--- DIAGNÓSTICO: El flujo está en 'confirmacion_pendiente'. Clasificando intención... ---")
+                
+                PROMPT_CLASIFICADOR = f"""
+                Eres un clasificador de intenciones experto. El usuario está viendo un resumen de su cita y le hemos preguntado si confirma.
+                Analiza su respuesta y clasifícala estrictamente en una de estas tres categorías:
+                
+                1.  "confirmar": Si el usuario acepta, confirma, o da una respuesta afirmativa (ej: "sí", "correcto", "perfecto").
+                2.  "cancelar": Si el usuario niega, dice que algo está mal, o da una respuesta negativa (ej: "no", "incorrecto", "no quiero", "cancela").
+                3.  "ambiguo": Si la respuesta no es clara, es una pregunta, o no se relaciona con confirmar o cancelar.
+
+                Responde ÚNICAMENTE con la palabra de la categoría (ej. "confirmar", "cancelar" o "ambiguo").
+
+                Respuesta del usuario: "{req_data.mensaje_usuario}"
+                Categoría:
+                """
+                clasificador_params = {
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": PROMPT_CLASIFICADOR}],
+                    "temperature": 0.0,
+                    "max_tokens": 10
+                }
+
+                intencion_detectada = "ambiguo"
+                try:
+                    response_openai = client.chat.completions.create(
+                        model=clasificador_params["model"],
+                        messages=clasificador_params["messages"],
+                        temperature=clasificador_params["temperature"],
+                        max_tokens=clasificador_params["max_tokens"]
+                    )
+                    
+                    intencion = response_openai.choices[0].message.content.strip().lower().replace('"', '').replace("'", '')
+                    
+                    if intencion in ["confirmar", "cancelar", "ambiguo"]:
+                        intencion_detectada = intencion
+                    else:
+                        logger.warning(f"Clasificador devolvió inesperado: '{intencion}'. Tratando como ambiguo.")
+                
+                except (KeyError, IndexError, TypeError, openai.APIError, Exception) as e:
+                    logger.error(f"Error procesando respuesta del clasificador: {e}")
+
+                #logger.info(f"--- Intención detectada: '{intencion_detectada}' ---")
+
+                estado_actual.pop('confirmacion_pendiente', None)
+                if intencion_detectada == "confirmar":
+                    final_response = { "mensaje_bot": "¡Perfecto! Los datos están confirmados.", "nuevo_estado": estado_actual, "accion": "finalizado"}
+                    return jsonify(final_response)
+                
+                elif intencion_detectada == "cancelar":
+                    #logger.info("Intención 'cancelar' (negación) detectada. Iniciando ciclo de corrección.")
+                    estado_actual['esperando_correccion'] = True 
+                    final_response = {
+                        "mensaje_bot": "Entendido. Por favor, ¿qué dato necesitas corregir?",
+                        "nuevo_estado": estado_actual, 
+                        "accion": "continuar" 
+                    }
+                    return jsonify(final_response)
+
+                else: 
+                    estado_actual['confirmacion_pendiente'] = True
+                    final_response = {"mensaje_bot": "No entendí tu respuesta. ¿Los datos del resumen son correctos? Por favor, responde 'sí' para confirmar o 'no' para cancelar.", "nuevo_estado": estado_actual, "accion": "continuar"}
+                    return jsonify(final_response)
+            
             pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
             pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
+
             paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
-        
-        nombre_tarea_actual = ''
-        datos_para_siguiente_accion = []
-        mensaje_para_prompt = req_data.mensaje_usuario
+            coincidencia = None
 
-        if paso_pendiente:
-            print(f"--- DIAGNÓSTICO: Siguiente paso pendiente encontrado: '{paso_pendiente.get('nombre')}' (Variable: '{paso_pendiente.get('variable_salida')}') ---", flush=True)
-            if paso_pendiente.get('sin_datos'):
-                nombre_tarea_actual = "Informar Error"
+            if paso_pendiente and req_data.mensaje_usuario:
+                palabras_clave_finalizar = ['terminar', 'finalizar', 'acabar', 'concluir', 'terminemos', 'acabemos', 'cancelar', 'cancela', 'anular', 'descartar', 'ya no', 'no más', 'no mas', 'olvídalo',
+                'déjalo así', 'no, gracias', 'no gracias','salir', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye','basta', 'detener', 'parar', 'alto']
+                if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_finalizar):
+                    return jsonify({"mensaje_bot": "Entendido. He cancelado el proceso. ¡Que tengas un buen día!", "nuevo_estado": estado_actual, "accion": "finalizado_por_usuario"})
                 
-                tipo_error = paso_pendiente.get('error_api', 'ERROR_INESPERADO')
-                nombre_paso_error = paso_pendiente.get('nombre', 'el paso actual')
-                nombre_paso_amigable_IA = traducir_variable_a_texto_humano(nombre_paso_error) 
-
-                print(f"--- Error detectado: {tipo_error} en el paso '{nombre_paso_amigable_IA}' ---", flush=True)
-
-                # Identificamos el último dato que el usuario SÍ seleccionó, para dar contexto.
-                ultimo_paso_exitoso_nombre = "tu selección anterior"
-                pasos_requeridos_llenos = [p['nombre'] for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and estado_actual.get(p.get('variable_salida'))]
-                if pasos_requeridos_llenos:
-                    # Toma el nombre del último paso que SÍ tiene un valor
-                    ultimo_paso_exitoso_nombre = traducir_variable_a_texto_humano(pasos_requeridos_llenos[-1])
-
-                if tipo_error == 'DOCUMENTO_NO_ENCONTRADO':
-                    #print(f"--- Tipo de error ({tipo_error}) implica dato de entrada inválido. Revirtiendo... ---", flush=True)
-                    # Revertimos el estado para que vuelva a pedir el dato que causó el error.
+                palabras_clave_retroceso = ['atrás', 'volver', 'regresar', 'retroceder', 'devolverme','cambiar', 'modificar', 'corregir', 'editar', 'otro', 'otra',
+                'elegir otro', 'elegir otra', 'quiero otro', 'quiero otra','me equivoqué', 'error', 'anterior', 'el paso anterior', 'la opción anterior', 'lo de antes', 'dejame volver', 'déjame volver']
+                if any(keyword in req_data.mensaje_usuario.lower() for keyword in palabras_clave_retroceso):
                     estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-                    
-                    mensaje_para_prompt = f"""
-                    Contexto de error: El sistema intentó validar el dato para el paso '{nombre_paso_amigable_IA}' (posiblemente usando '{ultimo_paso_exitoso_nombre}'), pero la validación falló. El dato proporcionado no se encontró o es inválido.
-                    Tarea: Informa al usuario de manera amigable que el dato que proporcionó (relacionado a '{ultimo_paso_exitoso_nombre}') parece ser incorrecto o no es válido. Pídele que por favor verifique y vuelva a ingresar la información para el paso anterior.
-                    """
-                
-                elif tipo_error == 'LISTA_VACIA':
-                    #print(f"--- Tipo de error ({tipo_error}). Informando al usuario Y revirtiendo automáticamente. ---", flush=True)
-                    
-                    ultimo_paso_lleno = None
-                    pasos_requeridos = [p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida')]
-                    for paso in reversed(pasos_requeridos):
-                        variable_salida = paso.get('variable_salida')
-                        if estado_actual.get(variable_salida):
-                            ultimo_paso_lleno = paso
-                            break 
-                    
-                    contexto_amigable_valor = "tu selección anterior" 
-                    if ultimo_paso_lleno:
-                        variable_salida_anterior = ultimo_paso_lleno['variable_salida']
-                        valor_id_actual = estado_actual.get(variable_salida_anterior) 
-                        
-                        valor_amigable_mapeado = None
-                        if ultimo_paso_lleno.get('data_key') and isinstance(ultimo_paso_lleno.get('data_key'), list) and ultimo_paso_lleno.get('key') and ultimo_paso_lleno.get('valor'):
-                            key_field = ultimo_paso_lleno['key']
-                            value_field = ultimo_paso_lleno['valor'] 
-                            for item in ultimo_paso_lleno.get('data_key', []):
-                                if isinstance(item, dict) and str(item.get(key_field)).strip() == str(valor_id_actual).strip():
-                                    valor_amigable_mapeado = item.get(value_field)
-                                    break
-                        
-                        if valor_amigable_mapeado:
-                            contexto_amigable_valor = valor_amigable_mapeado
-                        elif valor_id_actual:
-                            contexto_amigable_valor = valor_id_actual
-
-                    estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
-                    
                     paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
-                    
-                    if paso_pendiente:
-                        nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
-                        datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
-                    else:
-                        nombre_tarea_actual = "Informar Error"
-                        datos_para_siguiente_accion = []
-
-                    mensaje_para_prompt = f"""
-                    # CONTEXTO DEL ERROR (¡MUY IMPORTANTE!)
-                    El usuario había seleccionado previamente '{contexto_amigable_valor}', pero no se encontraron opciones para esa selección.
-                    El sistema ha regresado automáticamente al paso anterior.
-
-                    # TU TAREA
-                    1.  **Informar:** Informa al usuario de forma natural lo que pasó (ej. "Parece que no hay fechas para '{contexto_amigable_valor}'").
-                    2.  **Replantear:** Inmediatamente después, ejecuta la `TAREA ACTUAL` y volver a pedir que seleccione una nueva opcion del paso anterior).
-                    
-                    # REGLAS PARA LA RESPUESTA
-                    - Tu respuesta debe estar en una sola intervención.
-                    - La `TAREA ACTUAL` es ahora: {nombre_tarea_actual}.
-                    - Los `Datos disponibles` (que DEBES mostrar) son la lista para esa tarea.
-                    
-                    # EJEMPLO DE RESPUESTA COMBINADA (Guía de tono):
-                    "Parece que no hay fechas disponibles para el/la Dr(a). Toapanta Pinta. Por favor, elegir otro doctor de la lista"
-                    """
-
-                else: # ERROR_CONEXION, ERROR_SERVIDOR, ERROR_INESPERADO
-                    #print(f"--- Tipo de error ({tipo_error}). Informando al usuario SIN revertir el estado. ---", flush=True)
-                    #pedimos reintentar.
-                    mensaje_para_prompt = f"""
-                    Contexto de error: Hubo un problema técnico (como un error de conexión) al intentar obtener la información para '{nombre_paso_amigable_IA}'.
-                    Tarea: Informa al usuario amablemente sobre este problema técnico y pídele que por favor lo intente de nuevo (simplemente volviendo a enviar su último mensaje).
-                    """
-            else:
-                nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
-                datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
-        else:
-            print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)
-            resumen_para_ia = {}
-            print("--- Construyendo resumen legible para confirmación... ---", flush=True)
-            for paso in pasos_ordenados:
-                variable_salida = paso.get('variable_salida')
-                valor_actual = estado_actual.get(variable_salida)
+                    req_data.mensaje_usuario = ""
                 
-                es_paso_mostrable = (
-                    paso.get('tipo') == 'TEXT' or
-                    paso.get('tipo') == 'MULTIPLE' or
-                    (paso.get('tipo') == 'API' and paso.get('lista'))
-                )
-
-                if int(paso.get('required') or 0) == 1 and valor_actual is not None and str(valor_actual).strip() != '' and es_paso_mostrable:
-                    nombre_paso = paso.get('nombre', variable_salida) 
-                    valor_amigable = valor_actual 
+                if req_data.mensaje_usuario and paso_pendiente:
+                    valor_usuario = req_data.mensaje_usuario.strip()
+                    tipo_paso = paso_pendiente.get('tipo')
                     
-                    if paso.get('data_key') and isinstance(paso.get('data_key'), list) and paso.get('key') and paso.get('valor'):
-                        key_field = paso['key']
-                        value_field = paso['valor']
+                    opciones_disponibles = paso_pendiente.get('data', []) or []
+                    
+                    if tipo_paso == 'TEXT':
+                        coincidencia = valor_usuario
+                    elif tipo_paso in ['MULTIPLE', 'API']:
+                        if not coincidencia and valor_usuario.isdigit():
+                            indice = int(valor_usuario) - 1
+                            if 0 <= indice < len(opciones_disponibles):
+                                coincidencia = opciones_disponibles[indice]
+                        if not coincidencia:
+                            coincidencia = encontrar_coincidencia_local(valor_usuario, opciones_disponibles)
+            
+            if coincidencia is not None:
+                variable_a_llenar = paso_pendiente.get('variable_salida')
+                valor_final_para_estado = map_value_to_key(paso_pendiente, coincidencia)
+                estado_actual[variable_a_llenar] = valor_final_para_estado
+                print(f"--- Estado actualizado: '{variable_a_llenar}' = '{valor_final_para_estado}' ---", flush=True)
+
+                req_data.mensaje_usuario = ""
+                pasos_config_con_datos = llenar_datos_desde_api(estado_actual, pasos_config)
+                pasos_ordenados = sorted(pasos_config_con_datos, key=lambda p: int(p.get('order') or 999))
+                paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
+            
+            nombre_tarea_actual = ''
+            datos_para_siguiente_accion = []
+            mensaje_para_prompt = req_data.mensaje_usuario
+
+            if paso_pendiente:
+                print(f"--- DIAGNÓSTICO: Siguiente paso pendiente encontrado: '{paso_pendiente.get('nombre')}' (Variable: '{paso_pendiente.get('variable_salida')}') ---", flush=True)
+                if paso_pendiente.get('sin_datos'):
+                    nombre_tarea_actual = "Informar Error"
+                    
+                    tipo_error = paso_pendiente.get('error_api', 'ERROR_INESPERADO')
+                    nombre_paso_error = paso_pendiente.get('nombre', 'el paso actual')
+                    nombre_paso_amigable_IA = traducir_variable_a_texto_humano(nombre_paso_error) 
+
+                    print(f"--- Error detectado: {tipo_error} en el paso '{nombre_paso_amigable_IA}' ---", flush=True)
+
+                    # Identificamos el último dato que el usuario SÍ seleccionó, para dar contexto.
+                    ultimo_paso_exitoso_nombre = "tu selección anterior"
+                    pasos_requeridos_llenos = [p['nombre'] for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and estado_actual.get(p.get('variable_salida'))]
+                    if pasos_requeridos_llenos:
+                        # Toma el nombre del último paso que SÍ tiene un valor
+                        ultimo_paso_exitoso_nombre = traducir_variable_a_texto_humano(pasos_requeridos_llenos[-1])
+
+                    if tipo_error == 'DOCUMENTO_NO_ENCONTRADO':
+                        #print(f"--- Tipo de error ({tipo_error}) implica dato de entrada inválido. Revirtiendo... ---", flush=True)
+                        # Revertimos el estado para que vuelva a pedir el dato que causó el error.
+                        estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
                         
-                        if paso['data_key'] and isinstance(paso['data_key'][0], dict):
-                            for item in paso['data_key']:
-                                if isinstance(item, dict) and str(item.get(key_field)).strip().lower() == str(valor_actual).strip().lower():
-                                    valor_amigable = item.get(value_field)
-                                    print(f"  -> Mapeando: '{variable_salida}' (ID: {valor_actual}) -> (Nombre: {valor_amigable})")
-                                    break
+                        mensaje_para_prompt = f"""
+                        Contexto de error: El sistema intentó validar el dato para el paso '{nombre_paso_amigable_IA}' (posiblemente usando '{ultimo_paso_exitoso_nombre}'), pero la validación falló. El dato proporcionado no se encontró o es inválido.
+                        Tarea: Informa al usuario de manera amigable que el dato que proporcionó (relacionado a '{ultimo_paso_exitoso_nombre}') parece ser incorrecto o no es válido. Pídele que por favor verifique y vuelva a ingresar la información para el paso anterior.
+                        """
                     
-                    resumen_para_ia[nombre_paso] = valor_amigable
+                    elif tipo_error == 'LISTA_VACIA':
+                        #print(f"--- Tipo de error ({tipo_error}). Informando al usuario Y revirtiendo automáticamente. ---", flush=True)
+                        
+                        ultimo_paso_lleno = None
+                        pasos_requeridos = [p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida')]
+                        for paso in reversed(pasos_requeridos):
+                            variable_salida = paso.get('variable_salida')
+                            if estado_actual.get(variable_salida):
+                                ultimo_paso_lleno = paso
+                                break 
+                        
+                        contexto_amigable_valor = "tu selección anterior" 
+                        if ultimo_paso_lleno:
+                            variable_salida_anterior = ultimo_paso_lleno['variable_salida']
+                            valor_id_actual = estado_actual.get(variable_salida_anterior) 
+                            
+                            valor_amigable_mapeado = None
+                            if ultimo_paso_lleno.get('data_key') and isinstance(ultimo_paso_lleno.get('data_key'), list) and ultimo_paso_lleno.get('key') and ultimo_paso_lleno.get('valor'):
+                                key_field = ultimo_paso_lleno['key']
+                                value_field = ultimo_paso_lleno['valor'] 
+                                for item in ultimo_paso_lleno.get('data_key', []):
+                                    if isinstance(item, dict) and str(item.get(key_field)).strip() == str(valor_id_actual).strip():
+                                        valor_amigable_mapeado = item.get(value_field)
+                                        break
+                            
+                            if valor_amigable_mapeado:
+                                contexto_amigable_valor = valor_amigable_mapeado
+                            elif valor_id_actual:
+                                contexto_amigable_valor = valor_id_actual
 
-            print(f"--- Resumen construido: {json.dumps(resumen_para_ia, indent=2, ensure_ascii=False)} ---", flush=True)
-            nombre_tarea_actual = "Solicitar Confirmación"
-            estado_actual['confirmacion_pendiente'] = True
-            mensaje_para_prompt = (
-                "La recolección de datos ha terminado. "
-                "DEBES presentar un resumen de la cita. Para hacerlo, toma el JSON de 'Datos disponibles' y lista CADA CLAVE y CADA VALOR de ese JSON en un formato de lista amigable."
-                "Es CRÍTICO que incluyas TODA la información del JSON. No omitas ningún campo."
-                "Finaliza preguntando si desea confirmar (por ejemplo, '¿Es todo correcto?')."
+                        estado_actual = reversar_paso_en_estado(estado_actual, pasos_ordenados)
+                        
+                        paso_pendiente = next((p for p in pasos_ordenados if int(p.get('required') or 0) == 1 and p.get('variable_salida') and not estado_actual.get(p.get('variable_salida'))), None)
+                        
+                        if paso_pendiente:
+                            nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
+                            datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
+                        else:
+                            nombre_tarea_actual = "Informar Error"
+                            datos_para_siguiente_accion = []
+
+                        mensaje_para_prompt = f"""
+                        # CONTEXTO DEL ERROR (¡MUY IMPORTANTE!)
+                        El usuario había seleccionado previamente '{contexto_amigable_valor}', pero no se encontraron opciones para esa selección.
+                        El sistema ha regresado automáticamente al paso anterior.
+
+                        # TU TAREA
+                        1.  **Informar:** Informa al usuario de forma natural lo que pasó (ej. "Parece que no hay fechas para '{contexto_amigable_valor}'").
+                        2.  **Replantear:** Inmediatamente después, ejecuta la `TAREA ACTUAL` y volver a pedir que seleccione una nueva opcion del paso anterior).
+                        
+                        # REGLAS PARA LA RESPUESTA
+                        - Tu respuesta debe estar en una sola intervención.
+                        - La `TAREA ACTUAL` es ahora: {nombre_tarea_actual}.
+                        - Los `Datos disponibles` (que DEBES mostrar) son la lista para esa tarea.
+                        
+                        # EJEMPLO DE RESPUESTA COMBINADA (Guía de tono):
+                        "Parece que no hay fechas disponibles para el/la Dr(a). Toapanta Pinta. Por favor, elegir otro doctor de la lista"
+                        """
+
+                    else: # ERROR_CONEXION, ERROR_SERVIDOR, ERROR_INESPERADO
+                        #print(f"--- Tipo de error ({tipo_error}). Informando al usuario SIN revertir el estado. ---", flush=True)
+                        #pedimos reintentar.
+                        mensaje_para_prompt = f"""
+                        Contexto de error: Hubo un problema técnico (como un error de conexión) al intentar obtener la información para '{nombre_paso_amigable_IA}'.
+                        Tarea: Informa al usuario amablemente sobre este problema técnico y pídele que por favor lo intente de nuevo (simplemente volviendo a enviar su último mensaje).
+                        """
+                else:
+                    nombre_tarea_actual = f"Preguntar por el siguiente dato: {paso_pendiente.get('nombre')}"
+                    datos_para_siguiente_accion = paso_pendiente.get('data', []) or []
+            else:
+                print("--- DIAGNÓSTICO: Todos los pasos completados. Solicitando confirmación final. ---", flush=True)
+                resumen_para_ia = {}
+                print("--- Construyendo resumen legible para confirmación... ---", flush=True)
+                for paso in pasos_ordenados:
+                    variable_salida = paso.get('variable_salida')
+                    valor_actual = estado_actual.get(variable_salida)
+                    
+                    es_paso_mostrable = (
+                        paso.get('tipo') == 'TEXT' or
+                        paso.get('tipo') == 'MULTIPLE' or
+                        (paso.get('tipo') == 'API' and paso.get('lista'))
+                    )
+
+                    if int(paso.get('required') or 0) == 1 and valor_actual is not None and str(valor_actual).strip() != '' and es_paso_mostrable:
+                        nombre_paso = paso.get('nombre', variable_salida) 
+                        valor_amigable = valor_actual 
+                        
+                        if paso.get('data_key') and isinstance(paso.get('data_key'), list) and paso.get('key') and paso.get('valor'):
+                            key_field = paso['key']
+                            value_field = paso['valor']
+                            
+                            if paso['data_key'] and isinstance(paso['data_key'][0], dict):
+                                for item in paso['data_key']:
+                                    if isinstance(item, dict) and str(item.get(key_field)).strip().lower() == str(valor_actual).strip().lower():
+                                        valor_amigable = item.get(value_field)
+                                        print(f"  -> Mapeando: '{variable_salida}' (ID: {valor_actual}) -> (Nombre: {valor_amigable})")
+                                        break
+                        
+                        resumen_para_ia[nombre_paso] = valor_amigable
+
+                print(f"--- Resumen construido: {json.dumps(resumen_para_ia, indent=2, ensure_ascii=False)} ---", flush=True)
+                nombre_tarea_actual = "Solicitar Confirmación"
+                estado_actual['confirmacion_pendiente'] = True
+                mensaje_para_prompt = (
+                    "La recolección de datos ha terminado. "
+                    "DEBES presentar un resumen de la cita. Para hacerlo, toma el JSON de 'Datos disponibles' y lista CADA CLAVE y CADA VALOR de ese JSON en un formato de lista amigable."
+                    "Es CRÍTICO que incluyas TODA la información del JSON. No omitas ningún campo."
+                    "Finaliza preguntando si desea confirmar (por ejemplo, '¿Es todo correcto?')."
+                )
+                datos_para_siguiente_accion = resumen_para_ia
+
+            prompt_final = PLANTILLA_PROMPT_BASE.format(
+                orq_contexto=flujo_config.get('orq_contexto', ''),
+                orq_tono=flujo_config.get('orq_tono', ''),
+                orq_reglas=flujo_config.get('orq_reglas', ''),
+                orq_respuestas=flujo_config.get('orq_respuestas', ''),
+                orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
+                nombre_tarea_actual=nombre_tarea_actual,
+                estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
+                datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
+                mensaje_usuario=mensaje_para_prompt
             )
-            datos_para_siguiente_accion = resumen_para_ia
 
-        prompt_final = PLANTILLA_PROMPT_BASE.format(
-            orq_contexto=flujo_config.get('orq_contexto', ''),
-            orq_tono=flujo_config.get('orq_tono', ''),
-            orq_reglas=flujo_config.get('orq_reglas', ''),
-            orq_respuestas=flujo_config.get('orq_respuestas', ''),
-            orq_formato_respuestas=flujo_config.get('orq_formato_respuestas', ''),
-            nombre_tarea_actual=nombre_tarea_actual,
-            estado_json=json.dumps(estado_actual, indent=2, ensure_ascii=False),
-            datos_json=json.dumps(datos_para_siguiente_accion, indent=2, ensure_ascii=False),
-            mensaje_usuario=mensaje_para_prompt
-        )
+            response_openai = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt_final}],
+                response_format={"type": "json_object"},
+                temperature=0.3
+            )
+            gpt_output_str = response_openai.choices[0].message.content
+            gpt_output = json.loads(gpt_output_str)
 
-        response_openai = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt_final}],
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
-        gpt_output_str = response_openai.choices[0].message.content
-        gpt_output = json.loads(gpt_output_str)
+            accion_final = gpt_output.get("accion", "continuar")
+            if nombre_tarea_actual == "Informar Error":
+                accion_final = "error" 
+            elif estado_actual.get('confirmacion_pendiente'):
+                accion_final = "continuar"
+            elif not paso_pendiente and not estado_actual.get('confirmacion_pendiente'):
+                accion_final = "finalizado"
+            
+            final_response = {
+                "mensaje_bot": gpt_output.get("mensaje"),
+                "nuevo_estado": estado_actual,
+                "accion": accion_final
+            }
+            
+            print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
+            print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
+            print("**************************************************", flush=True)
 
-        accion_final = gpt_output.get("accion", "continuar")
-        if nombre_tarea_actual == "Informar Error":
-            accion_final = "error" 
-        elif estado_actual.get('confirmacion_pendiente'):
-            accion_final = "continuar"
-        elif not paso_pendiente and not estado_actual.get('confirmacion_pendiente'):
-            accion_final = "finalizado"
-        
-        final_response = {
-            "mensaje_bot": gpt_output.get("mensaje"),
-            "nuevo_estado": estado_actual,
-            "accion": accion_final
-        }
-        
-        print("\n--- RESPUESTA FINAL ENVIADA A LARAVEL ---", flush=True)
-        print(json.dumps(final_response, indent=2, ensure_ascii=False), flush=True)
-        print("**************************************************", flush=True)
-
-        return jsonify(final_response)
+            return jsonify(final_response)
 
     except Exception as e:
         traceback.print_exc()
@@ -2788,13 +2786,6 @@ def orquestar_chat():
                 cursor.close()
             except Exception:
                 pass
-
-        if db_connection and db_connection.is_connected():
-            try:
-                db_connection.close()
-                print("--- [DEBUG] Conexión cerrada correctamente en finally ---", flush=True)
-            except Exception as e:
-                print(f"--- [ERROR] Al cerrar conexión: {e} ---", flush=True)
 
 ###############
 # ip and port #

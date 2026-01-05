@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN pip install --no-cache-dir --upgrade mysql-connector-python
 
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's/deb.debian.org/http.us.debian.org/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-spa \
     tesseract-ocr-eng \

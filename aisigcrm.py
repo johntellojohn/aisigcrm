@@ -116,10 +116,13 @@ def get_data():
     try:
         
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(index)
-
-        query_response = index.query(
-            namespace=name_space,
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
+        index_instance = pc.Index(PRINCIPAL_INDEX_NAME)
+        
+        final_namespace = f"{index}_{name_space}"
+        
+        query_response = index_instance.query(
+            namespace=final_namespace,
             vector=[0.3] * 1536,
             top_k=top_k,
             include_values=include_values
@@ -148,7 +151,7 @@ def delete_index():
 
     # Cuerpo
     data = request.get_json()
-    index = data.get('index')
+    index_name_laravel = data.get('index')
 
     """
         {
@@ -156,51 +159,55 @@ def delete_index():
         }
     """
 
-    if not index:
+    if not index_name_laravel:
         return jsonify(response="El index es requerido."), 400
 
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        pc.delete_index(index)
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
+        index = pc.Index(PRINCIPAL_INDEX_NAME)
+        try:
+            index.delete(delete_all=True, namespace=index_name_laravel)
+        except:
+            pass
+            
+        # Opción B: Intentamos borrar variantes comunes que genera tu código
+        # (Historial, archivos, etc). Esto es "Blind Delete" (borrado a ciegas) pero seguro.
+        posibles_namespaces = [
+            index_name_laravel,
+            f"{index_name_laravel}_real",
+            f"{index_name_laravel}_user_history",
+            f"{index_name_laravel}_file"
+        ]
+        
+        for ns in posibles_namespaces:
+            try:
+                index.delete(delete_all=True, namespace=ns)
+                print(f"Namespace {ns} eliminado.", flush=True)
+            except Exception as e:
+                print(f"Namespace {ns} no existía o error: {e}", flush=True)
 
-        return "Todos los registros han sido eliminados", 200
+        return "Los datos de la empresa han sido eliminados del índice maestro.", 200
 
     except Exception as e:
         return f"Error: {str(e)}", 500
 
 @app.route('/api/createIndex', methods=['POST'])
 def create_index():
-
-    # Cuerpo
-    data = request.get_json()
-    index = data.get('index')
-
-    """
-        {
-            "index": "chatbot"
-        }
-    """
-
-    if not index:
-        return jsonify(response="El index es requerido."), 400
-
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-
-        if index not in pc.list_indexes().names():
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
+        
+        if PRINCIPAL_INDEX_NAME not in pc.list_indexes().names():
             pc.create_index(
-                name=index,
+                name=PRINCIPAL_INDEX_NAME,
                 dimension=1536,
                 metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region="us-east-1"
-                )
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
-            return "Indice Creado con éxito", 200
+            return "Indice Principal verificado/creado con éxito", 200
         else:
-            return "El índice ya existe", 200
-        
+            return "El sistema ya está listo (Índice Principal existente)", 200
     except Exception as e:
         return f"Error: {str(e)}", 500
 
@@ -210,20 +217,20 @@ def upsert_data():
     id_vector = data.get('id_vector')
     values_vector = data.get('values_vector')
     values_intention = data.get('values_intention')
-    name_space = data.get('name_space')
-    index_name = data.get('index_name')
+    name_space_original = data.get('name_space')
+    index_name_original = data.get('index_name')
     pagina_web_url = data.get('pagina_web_url', '')
 
-    if not index_name or not id_vector or not values_vector or not values_intention or not name_space:
+    if not index_name_original or not id_vector or not values_vector or not values_intention or not name_space_original:
         return jsonify(response="Se requiere de la siguiente información (id_vector, values_vector, name_space, index_name)."), 400
 
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
         # Verificar si el índice existe, si no, crearlo
-        if index_name not in pc.list_indexes().names():
+        if PRINCIPAL_INDEX_NAME not in pc.list_indexes().names():
             pc.create_index(
-                name=index_name,
+                name=PRINCIPAL_INDEX_NAME,
                 dimension=1536,
                 metric="cosine",
                 spec=ServerlessSpec(
@@ -232,7 +239,8 @@ def upsert_data():
                 )
             )
 
-        index = pc.Index(index_name)
+        index = pc.Index(PRINCIPAL_INDEX_NAME)
+        final_namespace = f"{index_name_original}_{name_space_original}"
 
         # Agregar URL
         if pagina_web_url:
@@ -266,78 +274,44 @@ def upsert_data():
 
         # Buscar el vector con el ID "InstruccionesDelBot"
         instructions_id = "IntencionesDelBot"
-        existing_vector = index.fetch(ids=[instructions_id], namespace=name_space)
         values_intructions = """
             Lista de intenciones:
         """ + values_intention  
 
-        if instructions_id not in existing_vector['vectors']:
-            instructions_values = embeddings.embed_query(values_intructions)
-            index.upsert(
-                vectors=[
-                    {
-                        "id": instructions_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": values_intructions
-                        }
+        instructions_values = embeddings.embed_query(values_intructions)
+        
+        index.upsert(
+            vectors=[
+                {
+                    "id": instructions_id,
+                    "values": instructions_values,
+                    "metadata": {
+                        "text": values_intructions
                     }
-                ],
-                namespace=name_space
-            )
-        else:
-            index.delete(ids=instructions_id, namespace=name_space)
-            instructions_values = embeddings.embed_query(values_intructions)
-            index.upsert(
-                vectors=[
-                    {
-                        "id": instructions_id,
-                        "values": instructions_values,
-                        "metadata": {
-                            "text": values_intructions
-                        }
-                    }
-                ],
-                namespace=name_space
-            )
+                }
+            ],
+            namespace=final_namespace
+        )
 
-        # Buscar el vector con el ID "Prompt"
-        existing_new_vector = index.fetch(ids=[id_vector], namespace=name_space)
-
-        if id_vector not in existing_new_vector['vectors']:
-            index.upsert(
-                vectors=[
-                    {
-                        "id": id_vector,
-                        "values": vector,
-                        "metadata": {
-                            "text": formatted_text
-                        }
+        index.upsert(
+            vectors=[
+                {
+                    "id": id_vector,
+                    "values": vector,
+                    "metadata": {
+                        "text": formatted_text
                     }
-                ],
-                namespace=name_space
-            )
-
-        else:
-            index.delete(ids=id_vector, namespace=name_space)
-            index.upsert(
-                vectors=[
-                    {
-                        "id": id_vector,
-                        "values": vector,
-                        "metadata": {
-                            "text": formatted_text
-                        }
-                    }
-                ],
-                namespace=name_space
-            )
+                }
+            ],
+            namespace=final_namespace
+        )
 
         index.describe_index_stats()
-        return "Información ingresada con éxito", 200
+        return jsonify(response="Información ingresada con éxito"), 200
 
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        print(f"Error en upsertData: {traceback.format_exc()}", flush=True)
+        return jsonify(error=f"Error: {str(e)}"), 500
 
 @app.route('/api/updateData', methods=['PUT'])
 def update_data():
@@ -354,7 +328,8 @@ def update_data():
     try:
         # Inicializar Pinecone y obtener el índice
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(index_name)
+        index = pc.Index("sigcrm-principal")
+        final_namespace = f"{index_name}_{name_space}"
 
         # Normalizar y formatear el texto
         normalized_text = unidecode(values_vector)
@@ -379,7 +354,7 @@ def update_data():
                     }
                 }
             ],
-            namespace=name_space
+            namespace=final_namespace
         )
 
         return "Información actualizada con éxito", 200
@@ -400,9 +375,10 @@ def delete_data():
 
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(index_name)
+        index = pc.Index("sigcrm-principal")
+        final_namespace = f"{index_name}_{names_space}"
 
-        index.delete(ids=[id_vector], namespace=names_space)
+        index.delete(ids=[id_vector], namespace=final_namespace)
 
         return (f"Vector {id_vector} fué eliminado con éxito"), 200
     
@@ -421,11 +397,13 @@ def delete_namespace():
 
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(index_name)
+        index = pc.Index("sigcrm-principal")
 
-        index.delete(delete_all=True, namespace=names_space)
+        final_namespace = f"{index_name}_{names_space}"
 
-        return (f"El namespace {names_space} fué eliminado con éxito"), 200
+        index.delete(delete_all=True, namespace=final_namespace)
+
+        return (f"El namespace {final_namespace} fué eliminado con éxito"), 200
     
     except Exception as e:
         return f"Error: {str(e)}", 500
@@ -457,12 +435,12 @@ def chatbot():
         pregunta = data.get('question')
         user_id = data.get('user_id') 
         max_histories = data.get('max_histories', 10)
-        name_space = data.get('name_space', 'real') 
         json_gpt = data.get('json_gpt')
-        index_name = data.get('index')
+        name_space_original = data.get('name_space', 'real') 
+        index_name_original = data.get('index')
 
         # Validar campos requeridos
-        if not pregunta or not user_id or not index_name:
+        if not pregunta or not user_id or not index_name_original:
             return jsonify(response="La pregunta, el ID de usuario y el nombre del índice son requeridos."), 400
             
         user_id_int = int(user_id)  # Convertir a entero para consistencia
@@ -474,10 +452,11 @@ def chatbot():
     try:
         # Inicializar conexión con Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(data.get('index'))  # Usar índice proporcionado
-        
-        
-        # Inicializar embeddings de OpenAI
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
+        index = pc.Index(PRINCIPAL_INDEX_NAME)
+
+        final_file_namespace = f"{index_name_original}_{name_space_original}"
+        final_history_namespace = f"{index_name_original}_user_history"
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         
         # 3. BUSCAR CONTEXTO RELEVANTE EN PINECONE
@@ -486,18 +465,17 @@ def chatbot():
         # permitiendo recuperar múltiples resultados semánticamente relevantes y aumentar la probabilidad de respuestas precisas.
         query_vector = embeddings.embed_query(pregunta)
         result = index.query(
-            namespace=name_space,
+            namespace=final_file_namespace,
             vector=query_vector,
             top_k=5,
             include_metadata=True
         )
 
         docs = [match['metadata']['text'] for match in result.get('matches', []) if 'metadata' in match and 'text' in match['metadata']]
-        #Uso de .get() para acceder a 'matches' de forma segura, evita un KeyError si 'matches' no está presente en la respuesta de Pinecone.
 
         # 3.2. Buscar historial previo del usuario
         prompt_history = index.query(
-            namespace="user_history",
+            namespace=final_history_namespace,
             id=str(user_id),
             top_k=5,
             include_metadata=True
@@ -510,7 +488,7 @@ def chatbot():
         
         # 3.3. Buscar base de conocimiento
         files_upload = index.query(
-            namespace="file",
+            namespace=f"{index_name_original}_file",
             vector=query_vector,
             top_k=10,
             include_metadata=True
@@ -651,33 +629,6 @@ def chatbot():
             print(f"ADVERTENCIA: Historial para metadatos fue truncado debido al límite de tamaño de Pinecone.", flush=True)
             print(f"           Tamaño original (bytes): {len(userHistory_bytes_check)}, Tamaño truncado para metadata (bytes): {len(userHistory_for_metadata.encode('utf-8', errors='ignore'))}", flush=True)
         
-        # if user_id not in existing_new_vector['vectors']:
-        #     # Crear nuevo vector de historial
-        #     index.upsert(
-        #         vectors=[{
-        #             "id": user_id,
-        #             "values": instructions_values,
-        #             "metadata": {
-        #                 "text": "Historial de conversacion:\n" + userHistory,
-        #                 "date": current_datetime
-        #             }
-        #         }],
-        #         namespace="user_history"
-        #     )
-        # else:
-        #     # Actualizar vector existente
-        #     index.delete(ids=user_id, namespace="user_history")
-        #     index.upsert( #CUANDO SE INTENTA SUBIR VECTOR CON METADATOS GRANDES, PINECONE RECHAZA LA SOLICITUD 
-        #         vectors=[{
-        #             "id": user_id,
-        #             "values": instructions_values,
-        #             "metadata": {
-        #                 "text": userHistory, #AQUI DA EL ERROR
-        #                 "date": current_datetime
-        #             }
-        #         }],
-        #         namespace="user_history"
-        #     )
         # 8.4. Actualizar vector en Pinecone
         # El embedding se genera a partir de 'userHistory' (que es el historial completo o limitado por max_histories).
         instructions_values = embeddings.embed_query(userHistory) 
@@ -701,7 +652,7 @@ def chatbot():
                 "values": instructions_values,
                 "metadata": metadata_payload_for_history
             }],
-            namespace="user_history"
+            namespace=final_history_namespace
         )
         # 9. CONSTRUIR RESPUESTA FINAL
         respuestaIA = {
@@ -737,17 +688,6 @@ def chatbot():
             "mensaje_debug": "Revisar los logs del servidor Docker para la traza completa."
         }
         return jsonify(error_response_data), 500
-    #except Exception as e:
-        # Manejo detallado de errores
-        #exc_type, exc_obj, tb = sys.exc_info()
-        #line_number = tb.tb_lineno
-        #filename = tb.tb_frame.f_code.co_filename
-        #return jsonify({
-            #"response": f"Ocurrió un error: {str(e)}",
-            #"archivo": filename,
-            #"linea": line_number,
-            #"tipo": str(exc_type.__name__)
-        #}), 500
     
 
 @app.route('/api/chatbot/v2', methods=['POST'])
@@ -779,22 +719,19 @@ def chatbot_v2():
     
     # 2. CONFIGURACIÓN INICIAL Y CONEXIONES
     try:
-        index_list_response = pc.list_indexes()
-        current_index_names = [idx_model.name for idx_model in index_list_response.indexes]
-        if index_name not in current_index_names:
-             return jsonify(error=f"El índice '{index_name}' no existe en Pinecone."), 404
-        index_instance = pc.Index(index_name)
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+        index_instance = pc.Index("sigcrm-principal")
+
+        final_namespace = f"{index_name}_{name_space}"
 
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         
-        # 3. BUSCAR CONTEXTO RELEVANTE EN PINECONE
-        print(f"Buscando en Pinecone - Index: {index_name}, Namespace: {name_space}, TopK: {top_k}", flush=True)
-        print(f"Pregunta Original para embedding: {pregunta_original}", flush=True)
+        print(f"Buscando en Pinecone - Index: sigcrm-principal, Namespace: {final_namespace}", flush=True)
         
         query_vector = embeddings.embed_query(pregunta_original)
         
         search_results = index_instance.query(
-            namespace=name_space,
+            namespace=final_namespace, 
             vector=query_vector,
             top_k=top_k, 
             include_metadata=True
@@ -884,8 +821,9 @@ def delete_history():
             return jsonify(response="Datos de entrada inválidos."), 400
 
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(data.get('index'))
-        index.delete(delete_all=True, namespace='user_history')
+        index = pc.Index("sigcrm-principal")
+        final_history_namespace = f"{data.get('index')}_user_history"
+        index.delete(delete_all=True, namespace=final_history_namespace)
         return jsonify(response="Historial eliminado correctamente."), 200
 
     except openai.error.AuthenticationError:
@@ -903,10 +841,10 @@ def upsert_file():
         file_url_id = data.get('link_file_id') 
         file_url = data.get('link_file')
         type_file = data.get('type_file') 
-        name_space = data.get('name_space')  
-        index_name = data.get('index')
+        name_space_original = data.get('name_space')  
+        index_name_original = data.get('index')
 
-        if not index_name or not file_url or not name_space or not type_file:
+        if not index_name_original or not file_url or not name_space_original or not type_file:
             return jsonify(response="Se requiere de la siguiente información (link_file, type_file, name_space, index)."), 400
         if not file_url_id:
             return jsonify(response="El parámetro 'link_file_id' también es requerido."), 400
@@ -1004,71 +942,41 @@ def upsert_file():
             
             # --- Lógica de Pinecone con adaptación para chunking ---
             pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+            PRINCIPAL_INDEX_NAME = "sigcrm-principal"
             index_list_resp_pinecone = pc.list_indexes()
             current_pinecone_indices_names = [idx.name for idx in index_list_resp_pinecone.indexes]
-            if index_name not in current_pinecone_indices_names:
-                pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+            
+            if PRINCIPAL_INDEX_NAME not in current_pinecone_indices_names:
+                print(f"Creando índice maestro {PRINCIPAL_INDEX_NAME}...", flush=True)
+                pc.create_index(name=PRINCIPAL_INDEX_NAME, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+                import time
+                time.sleep(10)
 
-            # 2. OBTENCIÓN DE INSTANCIA DEL ÍNDICE
-            index_pinecone_instance = pc.Index(index_name) 
-            embeddings_openai_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY) 
+            index_pinecone_instance = pc.Index(PRINCIPAL_INDEX_NAME) 
+            embeddings_openai_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 
-            # 3. PREPARACIÓN DEL CONTENIDO COMPLETO
-            #    'values_intructions_full_content' es tu 'values_intructions' original.
+            final_namespace = f"{index_name_original}_{name_space_original}"
+            print(f"--- Usando Index: {PRINCIPAL_INDEX_NAME} | Namespace Final: {final_namespace} ---", flush=True)
+
             values_intructions_full_content = f"""
                 Contenido del archivo ({type_file}):
                 {text} 
             """
-            #    'text' aquí es el 'processed_text_for_pinecone' que ya incluye texto y resúmenes de imágenes si el archivo era un PDF con imágenes.
 
-            # 4. DEFINICIONES PARA CHUNKING Y METADATOS
-            MAX_METADATA_BYTES_FOR_PINECONE = 39000 # Límite práctico para el campo 'text' en metadatos de Pinecone.
-            vectors_for_pinecone_upsert = [] # Lista para acumular los vectores a subir.
-            base_pinecone_vector_id = "file" + str(file_url_id) # es 'instructions_id' original. Se usará como base para IDs de chunks.
+            # 4. CHUNKING Y METADATOS
+            MAX_METADATA_BYTES_FOR_PINECONE = 39000 
+            vectors_for_pinecone_upsert = [] 
+            base_pinecone_vector_id = "file" + str(file_url_id)
 
-            # 5. ESTRATEGIA DE ACTUALIZACIÓN 
-            #    OBJETIVO: Cuando se actualiza un archivo (mismo 'file_url_id'), queremos reemplazar su contenido anterior en Pinecone.
-            #    PROBLEMA:
-            #        - Si antes el archivo se guardó como 1 solo vector y ahora se va a guardar como chunks.
-            #        - Si antes se guardó como N chunks y ahora se va a guardar como M chunks (o como 1 solo vector).
-            #    SOLUCIÓN INTRODUCIDA:
-            #        - Se intenta borrar el vector que tendría el ID base ('file' + file_url_id). Esto cubre el caso
-            #          donde el archivo se guardó previamente como un solo vector y ahora se quiere actualizar (ya sea
-            #          como un solo vector de nuevo o como chunks).
-            #        - SI EL ARCHIVO SE GUARDÓ ANTES COMO CHUNKS: Esta simple lógica de borrado NO eliminará
-            #          esos chunks antiguos (que tendrían IDs como 'file..._chunk_0', 'file..._chunk_1', etc.).
-            #          Eliminar chunks antiguos de forma selectiva es más complejo y requeriría:
-            #            a) Almacenar los IDs de todos los chunks asociados a un 'file_url_id' en algún lado, o
-            #            b) Usar la funcionalidad de 'delete by metadata filter' de Pinecone si los chunks tienen un metadato común
-            #               como 'file_url_id_param' (que se añadió en el nuevo código).
-            #               Ejemplo: index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
-            #            c) O borrar por prefijo de ID si la API de Pinecone lo permitiera directamente (no es común).
             try:
-                print(f"Intentando borrar datos antiguos para file_url_id '{file_url_id}' (ID base: {base_pinecone_vector_id}) en namespace '{name_space}'.", flush=True)
-                index_pinecone_instance.delete(ids=[base_pinecone_vector_id], namespace=name_space)
-                index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
-                # Para una limpieza más completa de chunks si 'file_url_id_param' se usa consistentemente en metadatos:
-                # index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=name_space)
-                # Esto borraría TODOS los vectores (chunks o no) que tengan ese file_url_id_param.
-                print(f"Intento de borrado de datos antiguos para '{file_url_id}' completado en namespace '{name_space}'.", flush=True)
+                print(f"Intentando borrar datos antiguos para file_url_id '{file_url_id}' en namespace '{final_namespace}'.", flush=True)
+                index_pinecone_instance.delete(ids=[base_pinecone_vector_id], namespace=final_namespace)
+                # Borrado por filtro metadata (más efectivo para chunks antiguos)
+                # index_pinecone_instance.delete(filter={"file_url_id_param": str(file_url_id)}, namespace=final_namespace) 
             except Exception as e_delete_old:
-                error_message_lower = str(e_delete_old).lower()
-                if "namespace not found" in error_message_lower or "namespace does not exist" in error_message_lower:
-                    print(f"Advertencia al intentar borrar datos antiguos: Namespace '{name_space}' probablemente aún no existe o no contenía datos para '{file_url_id}'. Error: {e_delete_old}", flush=True)
-                else:
-                    print(f"Error inesperado durante el borrado preventivo de datos antiguos: {e_delete_old}", flush=True)
+                print(f"Nota sobre borrado preventivo: {e_delete_old}", flush=True)
 
-
-            # 6. LÓGICA DE CHUNKING
-            #    OBJETIVO: Pinecone tiene un límite en el tamaño de los metadatos (especialmente el campo 'text' y por exceder límites de metadatos.).
-            #              Si el contenido extraído del archivo es muy grande, no cabrá en un solo vector.
-            #        - El código original asumía que 'values_intructions' siempre cabría. No había chunking.
-            #        - El nuevo código verifica el tamaño en bytes del contenido.
             if len(values_intructions_full_content.encode('utf-8')) <= MAX_METADATA_BYTES_FOR_PINECONE:
-                # CASO 1: EL CONTENIDO ES PEQUEÑO Y CABE EN UN SOLO VECTOR 
-                #    - Se crea un solo vector con 'base_pinecone_vector_id'.
-                #    - Los metadatos incluyen información para indicar que no es un chunk.
-                print(f"Contenido cabe en un solo vector. ID: {base_pinecone_vector_id}", flush=True)
                 embedding_for_single_vector = embeddings_openai_model.embed_query(values_intructions_full_content)
                 vectors_for_pinecone_upsert.append({
                     "id": base_pinecone_vector_id,
@@ -1077,29 +985,20 @@ def upsert_file():
                         "text": values_intructions_full_content,
                         "original_file_type": type_file,
                         "source_url": file_url,
-                        "file_url_id_param": str(file_url_id), # Para filtrado/agrupación
-                        "is_chunked": False, # Indica que este no es parte de un conjunto de chunks
-                        "chunk_index": 0,    # Índice del chunk (0 para el único chunk)
-                        "total_chunks": 1    # Número total de chunks (1 en este caso)
+                        "file_url_id_param": str(file_url_id),
+                        "is_chunked": False,
+                        "chunk_index": 0,
+                        "total_chunks": 1
                     }
                 })
             else:
-                # CASO 2: EL CONTENIDO ES DEMASIADO GRANDE, NECESITA CHUNKING
-                #    - Se usa CharacterTextSplitter de Langchain para dividir el texto.
-                #    - CADA CHUNK SE CONVIERTE EN UN VECTOR SEPARADO EN PINECONE.
-                #    - Cada chunk tendrá un ID único: base_id + "_chunk_" + índice_del_chunk.
-                #    - Los metadatos de cada chunk incluyen información sobre su origen y su posición en la secuencia.
-                print(f"Contenido excede límite ({MAX_METADATA_BYTES_FOR_PINECONE} bytes). Dividiendo en chunks para ID base: {base_pinecone_vector_id}", flush=True)
                 text_splitter_for_chunks = CharacterTextSplitter(
-                    separator="\n\n---\n\n", # Un separador que podrías usar en tu `processed_text_for_pinecone`
-                    chunk_size=15000,       # Tamaño del chunk en CARACTERES. Es una heurística para no exceder los bytes.
-                                            # Ajusta este valor según tus pruebas.
-                    chunk_overlap=200,      # Superposición entre chunks para mantener contexto.
+                    separator="\n\n---\n\n", 
+                    chunk_size=15000,       
+                    chunk_overlap=200,      
                     length_function=len
                 )
-                
                 text_chunks_from_splitter = text_splitter_for_chunks.split_text(values_intructions_full_content)
-                print(f"Generados {len(text_chunks_from_splitter)} chunks.", flush=True)
 
                 for i, single_chunk_text in enumerate(text_chunks_from_splitter):
                     chunk_pinecone_id = f"{base_pinecone_vector_id}_chunk_{i}" # ID único para el chunk
@@ -1138,30 +1037,24 @@ def upsert_file():
                         }
                     })
 
-            # 7. UPSERT DE VECTORES A PINECONE (MODIFICADO PARA MANEJAR UNO O VARIOS VECTORES)
-            #    - El código original siempre subía un solo vector.
-            #    - El nuevo código sube la lista 'vectors_for_pinecone_upsert', que puede contener
-            #      un solo vector (si el contenido era pequeño) o múltiples vectores (si se hizo chunking).
             if vectors_for_pinecone_upsert:
-                if len(vectors_for_pinecone_upsert) > 100:
-                        print(f"ADVERTENCIA - Intentando subir {len(vectors_for_pinecone_upsert)} vectores. Pinecone recomienda lotes de <=100. Implementar batching si esto es común.", flush=True)
+                # Subir en lotes de 100 para evitar errores de tamaño
+                batch_size = 100
+                for k in range(0, len(vectors_for_pinecone_upsert), batch_size):
+                    batch_k = vectors_for_pinecone_upsert[k:k+batch_size]
+                    index_pinecone_instance.upsert(vectors=batch_k, namespace=final_namespace)
                 
-                index_pinecone_instance.upsert(vectors=vectors_for_pinecone_upsert, namespace=name_space)
-                print(f"{len(vectors_for_pinecone_upsert)} vector(es) subido(s) a Pinecone.", flush=True)
+                print(f"{len(vectors_for_pinecone_upsert)} vector(es) subido(s) a Pinecone namespace: {final_namespace}.", flush=True)
             else:
-                print("No se generaron vectores para subir (esto no debería ocurrir si 'text' tiene contenido).", flush=True)
-            print(f"--- PROCESO COMPLETADO EXITOSAMENTE para file_id: {file_url_id_for_logging} ---", flush=True)
+                print("No se generaron vectores para subir.", flush=True)
+                
             return jsonify(response=f"Información ingresada con éxito. Se crearon {len(vectors_for_pinecone_upsert)} vector(es)."), 200
 
         except Exception as e:
-            print(f"---- DETAILED ERROR  ----", flush=True)
-            print(f"Exception Type: {type(e).__name__}", flush=True)
-            print(f"Exception Args: {e.args}", flush=True)
-            print(f"Full Traceback within upsertFile:\n{traceback.format_exc()}", flush=True)
+            print(f"---- DETAILED ERROR ----\n{traceback.format_exc()}", flush=True)
             return jsonify(error=f"Error: {str(e)}", traceback=traceback.format_exc()), 500
     except Exception as e:
-        # LOG DE ERROR CRÍTICO: Esto nos mostrará el error exacto
-        print(f"--- ERROR FATAL EN /api/upsertFile para file_id: {file_url_id_for_logging} ---\n{traceback.format_exc()}", flush=True)
+        print(f"--- ERROR FATAL EN /api/upsertFile ---\n{traceback.format_exc()}", flush=True)
         return jsonify(error=f"Error interno: {str(e)}", traceback=traceback.format_exc()), 500
 
 @app.route('/api/deleteFile', methods=['DELETE'])
@@ -1175,12 +1068,13 @@ def delete_file():
 
         # Configurar Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
-        index = pc.Index(data.get('index'))
+        index = pc.Index("sigcrm-principal")
 
-        # Eliminar el archivo específico dentro del namespace
-        index.delete(ids=[data.get('file_id')], namespace=data.get('namespace'))
+        final_namespace = f"{data.get('index')}_{data.get('namespace')}"
 
-        return jsonify(response=f"Archivo {data.get('file_id')} eliminado correctamente en namespace {data.get('namespace')}.", status_code=200), 200
+        index.delete(ids=[data.get('file_id')], namespace=final_namespace)
+
+        return jsonify(response=f"Archivo eliminado correctamente en {final_namespace}.", status_code=200), 200
 
     except openai.error.AuthenticationError:
         return jsonify(response="La API key no es válida.", status_code=401), 401
@@ -1208,26 +1102,25 @@ def verify_file_deletion():
         if not data or 'index' not in data or 'file_id' not in data or 'namespace' not in data:
             return jsonify(response="Datos de entrada inválidos. Se requiere 'index', 'file_id' y 'namespace'."), 400
 
-        index_name = data.get('index')
+        index_name_original = data.get('index')
         file_id_to_check = data.get('file_id')
-        namespace = data.get('namespace')
+        namespace_original = data.get('namespace')
 
         pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY')) 
 
-        index_list_response = pc.list_indexes()
-        current_index_names = [idx_model.name for idx_model in index_list_response.indexes]
-        if index_name not in current_index_names:
-            return jsonify(success=False, message=f"El índice '{index_name}' no existe en Pinecone."), 404
+        if "sigcrm-principal" not in pc.list_indexes().names():
+            return jsonify(success=False, message="Índice maestro no disponible."), 404
 
-        index_instance = pc.Index(index_name)
+        index_instance = pc.Index("sigcrm-principal")
+        
+        final_namespace = f"{index_name_original}_{namespace_original}"
 
-        # Intentar obtener el vector por su ID. Si no se encuentra, significa que fue eliminado.
-        fetch_response = index_instance.fetch(ids=[file_id_to_check], namespace=namespace)
+        fetch_response = index_instance.fetch(ids=[file_id_to_check], namespace=final_namespace)
 
         if not fetch_response['vectors']:
-            return jsonify(success=True, message=f"El archivo con ID '{file_id_to_check}' no se encontró en el namespace '{namespace}', lo que indica que fue eliminado o no existía."), 200
+            return jsonify(success=True, message=f"El archivo con ID '{file_id_to_check}' no se encontró en el namespace '{final_namespace}', lo que indica que fue eliminado o no existía."), 200
         else:
-            return jsonify(success=False, message=f"El archivo con ID '{file_id_to_check}' todavía existe en el namespace '{namespace}'. La eliminación no fue verificada."), 409 # Conflict
+            return jsonify(success=False, message=f"El archivo con ID '{file_id_to_check}' todavía existe en el namespace '{final_namespace}'. La eliminación no fue verificada."), 409 # Conflict
 
     except openai.APIError as e_openai:
         print(f"OpenAI API Error en verifyFileDeletion (inesperado): {traceback.format_exc()}", flush=True)
@@ -1360,15 +1253,17 @@ def upload_pdf_chat():
         print("PDF descargado.", flush=True)
 
         # 2: Verifica que el índice de Pinecone especificado exista
-        index_list_response = pc.list_indexes()
-        current_index_names = [index_model.name for index_model in index_list_response.indexes]
-
-        if index_name not in current_index_names:
-            print(f"Error: El índice de Pinecone '{index_name}' no existe.", flush=True)
-            return jsonify(error=f"El índice de Pinecone '{index_name}' no existe."), 404
-
-        index_instance = pc.Index(index_name)
-        print(f"Usando índice de Pinecone existente: {index_name}", flush=True)
+        pc = Pinecone(api_key=PINECONE_API_KEY_PRUEBAS)
+        PRINCIPAL_INDEX_NAME = "sigcrm-principal"
+        
+        if PRINCIPAL_INDEX_NAME not in pc.list_indexes().names():
+            pc.create_index(name=PRINCIPAL_INDEX_NAME, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+        
+        index_instance = pc.Index(PRINCIPAL_INDEX_NAME)
+        
+        final_pdf_namespace = f"{index_name}_{pdf_id}"
+        
+        print(f"Usando índice maestro: {PRINCIPAL_INDEX_NAME} | Namespace: {final_pdf_namespace}", flush=True)
 
         embeddings_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -1438,8 +1333,8 @@ def upload_pdf_chat():
                                 img_rect = item["rect"]
                                 break
                         if not img_rect: 
-                           rects = page.get_image_bbox(img_info, transform=True)
-                           if rects: img_rect = rects
+                            rects = page.get_image_bbox(img_info, transform=True)
+                            if rects: img_rect = rects
 
                     except Exception as e_bbox:
                         print(f"Advertencia: No se pudo obtener el bounding box para la imagen {xref} en página {page_number_for_display}: {e_bbox}", flush=True)
@@ -1485,7 +1380,7 @@ def upload_pdf_chat():
             for i in range(0, total_vectors, batch_size):
                 batch = vectors_to_upsert[i:i + batch_size]
                 print(f"Subiendo batch {i // batch_size + 1} de { (total_vectors + batch_size -1) // batch_size } a Pinecone (namespace: {pdf_id})...", flush=True)
-                index_instance.upsert(vectors=batch, namespace=pdf_id)
+                index_instance.upsert(vectors=batch, namespace=final_pdf_namespace)
             print("Todos los vectores subidos a Pinecone.", flush=True)
             response_data = {
                 "status": "OK",

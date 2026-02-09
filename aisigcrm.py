@@ -2740,7 +2740,7 @@ def verificar_telefono_existente():
         cursor = conn.cursor()
 
         query = "SELECT 1 FROM huellas_voz WHERE user_telefono = %s LIMIT 1"
-        cursor.execute(query, (numero_limpio,))iar
+        cursor.execute(query, (numero_limpio,))
         
         row = cursor.fetchone()
 

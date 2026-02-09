@@ -54,6 +54,7 @@ from transformers.models.wav2vec2.modeling_wav2vec2 import (
     Wav2Vec2Model,
     Wav2Vec2PreTrainedModel,
 )
+import uuid
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2

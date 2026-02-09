@@ -2714,26 +2714,23 @@ def analizar_emocion():
 def verificar_telefono_existente():
     """
     Verifica si un número de teléfono ya existe en la tabla huellas_voz.
-    Espera un JSON con la clave "numero_telefono".
     """
-    try:
-        data = request.get_json()
-        if not data or 'numero_telefono' not in data or 'db_name' not in data:
-            return jsonify({"error": "Faltan los parámetros 'numero_telefono' o 'db_name' en el cuerpo de la solicitud."}), 400
-        
-        numero_telefono = data['numero_telefono']
-        db_name = data['db_name']
-
-        if not numero_telefono or not db_name:
-            return jsonify({"error": "Los valores de 'numero_telefono' y 'db_name' no pueden estar vacíos."}), 400
-        
-
-    except Exception as e:
-        return jsonify({"error": f"JSON malformado o error en la solicitud: {str(e)}"}), 400
-
     conn = None
     cursor = None
-    try:        
+    
+    try:
+        if not request.is_json:
+             return jsonify({"error": "El cuerpo de la solicitud debe ser JSON."}), 400
+
+        data = request.get_json()
+        numero_telefono = data.get('numero_telefono')
+        db_name = data.get('db_name')
+
+        if not numero_telefono or not db_name:
+            return jsonify({"error": "Faltan los parámetros 'numero_telefono' o 'db_name'."}), 400
+
+        numero_limpio = re.sub(r'\D', '', str(numero_telefono))
+
         conn = mysql.connector.connect(
             host=DB_HOST,
             user=DB_USERNAME,
@@ -2742,27 +2739,44 @@ def verificar_telefono_existente():
         )
         cursor = conn.cursor()
 
-        query = "SELECT COUNT(*) FROM huellas_voz WHERE user_telefono = %s"
-        cursor.execute(query, (numero_telefono,))
+        query = "SELECT 1 FROM huellas_voz WHERE user_telefono = %s LIMIT 1"
+        cursor.execute(query, (numero_limpio,))iar
         
-        count = cursor.fetchone()[0]
+        row = cursor.fetchone()
 
-        if count > 0:
-            return jsonify({"existe": True, "numero": numero_telefono}), 200
-        else:
-            return jsonify({"existe": False, "numero": numero_telefono}), 200
+        exists = row is not None
+
+        return jsonify({
+            "existe": exists, 
+            "numero": numero_telefono,
+            "mensaje": "Usuario encontrado" if exists else "Usuario no registrado"
+        }), 200
 
     except mysql.connector.Error as err:
-        logger.error(f"Error de base de datos en verificar_telefono_existente: {err}")
+        logger.error(f"Error de MySQL en verificar_telefono_existente: {err}")
+        
+        if err.errno == 1049: 
+             return jsonify({"error": f"La base de datos '{db_name}' no existe."}), 404
+             
         return jsonify({"error": f"Error de base de datos: {err.msg}"}), 500
+
     except Exception as e:
-        logger.error(f"Error inesperado en verificar_telefono_existente: {e}")
-        return jsonify({"error": "Ocurrió un error interno en el servidor."}), 500
+        logger.error(f"Error inesperado: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
     finally:
         if cursor:
-            cursor.close()
+            try:
+                cursor.close()
+            except:
+                pass
         if conn and conn.is_connected():
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 ###############
 # ip and port #

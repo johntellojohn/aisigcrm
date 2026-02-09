@@ -48,6 +48,12 @@ import soundfile as sf
 import torchaudio
 import librosa
 import torch.nn.functional as F
+import torch.nn as nn
+from transformers import Wav2Vec2Processor
+from transformers.models.wav2vec2.modeling_wav2vec2 import (
+    Wav2Vec2Model,
+    Wav2Vec2PreTrainedModel,
+)
 
 print("Este es un mensaje de prueba", flush=True)  # M  todo 1
 sys.stdout.flush()  # M  todo 2
@@ -60,6 +66,39 @@ os.environ["OPENAI_API_KEY"] = os.getenv('OPENAI_API_KEY')
 
 # Inicializar Pinecone
 pc = Pinecone(os.getenv('PINECONE_API_KEY'))
+
+class RegressionHead(nn.Module):
+    r"""Classification head."""
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dropout = nn.Dropout(config.final_dropout)
+        self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(self, features, **kwargs):
+        x = features
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+class EmotionModel(Wav2Vec2PreTrainedModel):
+    r"""Speech emotion classifier."""
+    def __init__(self, config):
+        super().__init__(config)
+        self.config = config
+        self.wav2vec2 = Wav2Vec2Model(config)
+        self.classifier = RegressionHead(config)
+        self.init_weights()
+
+    def forward(self, input_values):
+        outputs = self.wav2vec2(input_values)
+        hidden_states = outputs[0]
+        hidden_states = torch.mean(hidden_states, dim=1)
+        logits = self.classifier(hidden_states)
+        return hidden_states, logits
 
 
 app = Flask(__name__)
@@ -102,21 +141,21 @@ try:
 except Exception as e:
     logger.error(f"Error al cargar el modelo SpeechBrain Encoder: {e}")
 
-# 4. Carga del Modelo de Reconocimiento de Emociones (SER) - Método Manual con MSP-Dim
-emotion_feature_extractor = None
+# 4. Carga del Modelo de Reconocimiento de Emociones por Método Audeering 
+emotion_processor = None
 emotion_model = None
+
 try:
-    logger.info("Cargando modelo de emociones por dimensiones (MSP-Dim)...")
-    from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+    logger.info("Cargando modelo de emociones Audeering...")
     
-    model_name = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
+    model_name_emotion = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
     
-    emotion_feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
-    emotion_model = AutoModelForAudioClassification.from_pretrained(model_name).to(device)
+    emotion_processor = Wav2Vec2Processor.from_pretrained(model_name_emotion)
+    emotion_model = EmotionModel.from_pretrained(model_name_emotion).to(device)
     
-    logger.info("Modelo MSP-Dim cargado exitosamente.")
+    logger.info("Modelo de Emociones Audeering cargado exitosamente.")
 except Exception as e:
-    logger.error(f"Error al cargar el modelo MSP-Dim: {e}")
+    logger.error(f"Error al cargar el modelo de emociones: {e}")
 
 
 ############
@@ -2585,74 +2624,90 @@ def identificar_hablante():
 
 @app.route('/api/analizar_emocion', methods=['POST'])
 def analizar_emocion():
-    if not emotion_model or not emotion_feature_extractor:
+    if not emotion_model or not emotion_processor:
         return jsonify({"error": "El modelo de reconocimiento de emociones no está disponible."}), 503
 
-    if 'archivo_audio' not in request.files:
-        return jsonify({"error": "No se encontró el archivo de audio en la petición."}), 400
+    if not request.is_json:
+        return jsonify({"error": "El cuerpo de la petición debe ser JSON."}), 400
+    
+    data = request.get_json()
+    audio_url = data.get('audio_url')
 
-    archivo = request.files['archivo_audio']
-    if archivo.filename == '':
-        return jsonify({"error": "No se seleccionó ningún archivo."}), 400
+    if not audio_url:
+        return jsonify({"error": "Falta el parámetro 'audio_url' en el JSON."}), 400
 
-    temp_filename = f"temp_emotion_{archivo.filename}"
-    archivo.save(temp_filename)
-
+    temp_filename = f"temp_emotion_{uuid.uuid4()}.ogg"
+    
     try:
-        logger.info(f"Analizando emociones para el archivo: {archivo.filename}")
+        logger.info(f"Iniciando descarga de audio desde: {audio_url}")
 
-        signal, sample_rate = librosa.load(temp_filename, sr=16000)
-        inputs = emotion_feature_extractor(signal, sampling_rate=16000, return_tensors="pt", padding=True)
-        inputs = {key: inputs[key].to(device) for key in inputs}
-        with torch.no_grad():
-            logits = emotion_model(**inputs).logits
-        scores = logits.detach().cpu().numpy()[0]
-        labels = emotion_model.config.id2label
+        response = requests.get(audio_url, stream=True, verify=False, timeout=30)
+        response.raise_for_status() 
 
-        scores_dict = {labels[i].lower(): float(scores[i]) for i in range(len(labels))}
-        logger.info(f"Puntuaciones del Modelo (dimensiones): {scores_dict}")
-
-        # --- Lógica de Clasificación Binaria (Estable vs. Inestable) ---
-        # Se define un umbral único. Si el valor absoluto de cualquier dimensión
-        # lo supera, la voz se considera "Inestable".
-
-        alerta_code = 0
-        emocion_final = "Estable"
-
-        arousal = scores_dict.get('arousal', 0)
-        valence = scores_dict.get('valence', 0)
-        dominance = scores_dict.get('dominance', 0)
-
-        # Umbral de inestabilidad calibrado según los logs.
-        # Un valor más alto de este umbral hará al sistema menos sensible.
-        UMBRAL_DE_INESTABILIDAD = 0.015
-
-        # Comprobamos si alguna dimensión se sale de la "zona de estabilidad"
-        if (abs(arousal) > UMBRAL_DE_INESTABILIDAD or
-            abs(valence) > UMBRAL_DE_INESTABILIDAD or
-            abs(dominance) > UMBRAL_DE_INESTABILIDAD):
-            
-            emocion_final = "Inestable"
-            alerta_code = 1
+        with open(temp_filename, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
         
-        mensaje = "Se detectó una posible inestabilidad en la voz." if alerta_code == 1 else "Voz estable detectada."
+        logger.info("Audio descargado correctamente. Iniciando análisis...")
 
-        logger.info(f"Clasificación Final: {emocion_final}, Alerta: {alerta_code}")
+        signal, sample_rate = librosa.load(temp_filename, sr=16000, duration=15)
+        
+        inputs = emotion_processor(signal, sampling_rate=16000)
+        inputs = inputs['input_values'][0]
+        inputs = inputs.reshape(1, -1)
+        inputs = torch.from_numpy(inputs).to(device)
+
+        with torch.no_grad():
+            _, logits = emotion_model(inputs)
+        
+        scores = logits.detach().cpu().numpy()[0]
+        arousal = float(scores[0])
+        dominance = float(scores[1])
+        valence = float(scores[2])
+
+        scores_dict = {
+            "arousal": arousal,
+            "dominance": dominance,
+            "valence": valence
+        }
+
+        es_coaccion = False
+        mensaje = "Voz normal o segura."
+
+        if arousal > 0.65 and dominance < 0.60:
+            es_coaccion = True
+            mensaje = "ALERTA CRÍTICA: Patrón de Pánico o Gritos detectado."
+        
+        elif dominance < 0.38:
+            es_coaccion = True
+            mensaje = "ALERTA CRÍTICA: Miedo intenso o sumisión detectada (Voz temblorosa)."
+
+        elif arousal > 0.75:
+            es_coaccion = True
+            mensaje = "ALERTA: Voz muy alterada (Estrés o Enojo)."
+
+        logger.info(f"Análisis finalizado: {mensaje}")
 
         return jsonify({
-            "alerta": alerta_code,
+            "es_coaccion": es_coaccion,
             "mensaje": mensaje,
-            "emocion_detectada": emocion_final,
+            "audio_url_procesada": audio_url,
             "dimensiones": scores_dict
         })
 
+    except requests.exceptions.RequestException as e_net:
+        logger.error(f"Error de red al descargar audio: {e_net}")
+        return jsonify({"error": f"No se pudo descargar el audio. Verifique la URL. Detalles: {str(e_net)}"}), 400
     except Exception as e:
-        logger.error(f"Error durante el análisis de emoción: {e}")
+        logger.error(f"Error interno procesando audio: {e}")
         traceback.print_exc()
-        return jsonify({"error": "No se pudo procesar el archivo de audio para análisis de emoción."}), 500
+        return jsonify({"error": f"Error interno del servidor: {str(e)}"}), 500
     finally:
         if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+            try:
+                os.remove(temp_filename)
+            except:
+                pass
 
 @app.route('/api/verificar_telefono_existente', methods=['POST'])
 def verificar_telefono_existente():

@@ -23,6 +23,7 @@ Pillow==11.2.1
 PyMuPDF==1.25.5
 mysql-connector-python==9.3.0
 python-dateutil==2.9.0
+gunicorn==21.2.0
 
 # pip install openai==1.63.2
 # pip install pinecone-client==5.0.1

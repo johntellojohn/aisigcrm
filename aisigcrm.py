@@ -2643,14 +2643,43 @@ def orquestar_chat():
                 mensaje_usuario=mensaje_para_prompt
             )
 
-            response_openai = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt_final}],
-                response_format={"type": "json_object"},
-                temperature=0.3
-            )
-            gpt_output_str = response_openai.choices[0].message.content
-            gpt_output = json.loads(gpt_output_str)
+            try:
+                response_openai = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt_final}],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                    timeout=45
+                )
+                gpt_output_str = response_openai.choices[0].message.content
+                
+                try:
+                    gpt_output = json.loads(gpt_output_str)
+                except json.JSONDecodeError as e:
+                    print(f"FALLBACK: OpenAI no devolvió un JSON válido. Respuesta cruda: {gpt_output_str} !!!", flush=True)
+                    # FALLBACK 1: Si la IA alucina y no da JSON, creamos uno de emergencia
+                    gpt_output = {
+                        "accion": "continuar",
+                        "mensaje": "Disculpa, ¿Podrías confirmarme lo último que me dijiste?",
+                        "nuevo_estado": estado_actual
+                    }
+                    
+            except openai.APIError as e:
+                print(f"FALLBACK: Error en la API de OpenAI: {str(e)} !!!", flush=True)
+                # FALLBACK 2: Si OpenAI está caído o da timeout
+                gpt_output = {
+                    "accion": "continuar",
+                    "mensaje": "El sistema de inteligencia artificial está un poco saturado en este momento. ¿Podrías intentar de nuevo en unos segundos?",
+                    "nuevo_estado": estado_actual
+                }
+            except Exception as e:
+                print(f"FALLBACK: Error inesperado generando respuesta: {str(e)} !!!", flush=True)
+                # FALLBACK 3: Cualquier otro error interno
+                gpt_output = {
+                    "accion": "error",
+                    "mensaje": "Ocurrió un error procesando tu solicitud, pero ya lo estamos revisando. ¡Intenta en un momento!",
+                    "nuevo_estado": estado_actual
+                }
 
             accion_final = gpt_output.get("accion", "continuar")
             if nombre_tarea_actual == "Informar Error":

@@ -21,5 +21,5 @@ RUN apt-get update && apt-get install -y \
 # Exponer el puerto que usa la aplicación
 EXPOSE 5015
 
-# Comando para ejecutar la aplicación
-CMD ["python", "aisigcrm.py"]
+# Comando para ejecutar la aplicación con Gunicorn en producción
+CMD ["gunicorn", "--workers", "4", "--threads", "4", "--timeout", "120", "--bind", "0.0.0.0:5015", "aisigcrm:app"]
